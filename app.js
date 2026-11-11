@@ -18,28 +18,98 @@ const defaultPengirimList = [
 ];
 
 window.addEventListener('DOMContentLoaded', async () => {
-  muatPengaturanTersimpan();
-  inisialisasiPengirim();
+  try {
+    muatPengaturanTersimpan();
+    inisialisasiPengirim();
 
-  // 1. Cek apakah ada kiriman teks langsung via URL (GET)
-  const urlParams = new URLSearchParams(window.location.search);
-  const sharedText = urlParams.get('text') || urlParams.get('title') || '';
-  if (sharedText) parseTeksEwallet(sharedText);
-
-  // 2. Cek apakah ada kiriman dari e-wallet via Service Worker (POST)
-  if (urlParams.get('shared') === 'true') {
-    const cache = await caches.open('wahstruk-share');
-    const cachedText = await cache.match('shared-text');
-    if (cachedText) {
-      const text = await cachedText.text();
-      parseTeksEwallet(text);
-      await cache.delete('shared-text');
+    // 1. Tangkap Share Teks langsung dari URL (Metode GET)
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedText = urlParams.get('text') || urlParams.get('title') || '';
+    if (sharedText) {
+      parseTeksEwallet(sharedText);
     }
+
+    // 2. Tangkap kiriman dari Service Worker (Metode POST)
+    if (urlParams.get('shared') === 'true' && 'caches' in window) {
+      const cache = await caches.open('wahstruk-share');
+      const cachedText = await cache.match('shared-text');
+      if (cachedText) {
+        const text = await cachedText.text();
+        parseTeksEwallet(text);
+        await cache.delete('shared-text');
+      }
+    }
+  } catch (err) {
+    console.error("Gagal membaca share:", err);
+  } finally {
+    // Pastikan struk SELALU digambar dan tidak boleh kosong!
+    renderStruk();
+    renderRiwayat();
+  }
+});
+
+// ==================== FUNGSI PARSER SAKTI BUKTI E-WALLET ====================
+function parseTeksEwallet(text) {
+  if (!text) return;
+
+  // JIKA TIPE TOKEN LISTRIK
+  if (/PLN|TOKEN|METER/i.test(text)) {
+    document.getElementById('tipeStruk').value = 'token';
+    gantiTipeStruk();
+    
+    const tokenMatch = text.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
+    if (tokenMatch) {
+      document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
+    }
+    const nominalMatch = text.match(/Rp\s*([\d\.,]+)/i) || text.match(/(\d{1,3}(?:[.,]\d{3})+)/);
+    if (nominalMatch) {
+      document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
+    }
+    return;
   }
 
-  renderStruk();
-  renderRiwayat();
-});
+  // JIKA TIPE TRANSFER BANK / E-WALLET
+  document.getElementById('tipeStruk').value = 'transfer';
+  gantiTipeStruk();
+
+  // 1. Deteksi Bank Tujuan
+  if (/BCA/i.test(text)) document.getElementById('trf_bank').value = "BCA";
+  else if (/BRI|BRIMO/i.test(text)) document.getElementById('trf_bank').value = "BRI";
+  else if (/MANDIRI|LIVIN/i.test(text)) document.getElementById('trf_bank').value = "MANDIRI";
+  else if (/BNI/i.test(text)) document.getElementById('trf_bank').value = "BNI";
+  else if (/SEABANK/i.test(text)) document.getElementById('trf_bank').value = "SEABANK";
+  else if (/JAGO/i.test(text)) document.getElementById('trf_bank').value = "BANK JAGO";
+  else if (/DANA/i.test(text)) document.getElementById('trf_bank').value = "DANA";
+  else if (/SHOPEE/i.test(text)) document.getElementById('trf_bank').value = "SHOPEEPAY";
+  else if (/GOPAY/i.test(text)) document.getElementById('trf_bank').value = "GOPAY";
+  else if (/OVO/i.test(text)) document.getElementById('trf_bank').value = "OVO";
+
+  // 2. Deteksi Nominal Transfer (Cari pola Rp 50.000 atau nominal angka)
+  const nominalMatch = text.match(/Rp\s*([\d\.,]+)/i) || text.match(/Nominal[\s:]*Rp?\s*([\d\.,]+)/i) || text.match(/Jumlah[\s:]*Rp?\s*([\d\.,]+)/i);
+  if (nominalMatch) {
+    const bersih = nominalMatch[1].replace(/[\.,]/g, '');
+    document.getElementById('trf_nominal').value = parseInt(bersih);
+  }
+
+  // 3. Deteksi No. Rekening Tujuan (Pola 9 sampai 16 digit angka)
+  const rekMatch = text.match(/(?:Ke|Tujuan|Rekening|No\.?\s*Rek)[\s:]*([0-9]{9,18})/i) || text.match(/([0-9]{10,16})/);
+  if (rekMatch) {
+    document.getElementById('trf_rek').value = rekMatch[1];
+  }
+
+  // 4. Deteksi Nama Penerima
+  const penerimaMatch = text.match(/(?:Penerima|Ke|Nama)[\s:]*([A-Za-z\s]{3,30})(?:\n|\r|Bank|Rp|$)/i);
+  if (penerimaMatch) {
+    const namaBersih = penerimaMatch[1].trim().replace(/(BCA|BRI|MANDIRI|DANA|BERHASIL)/gi, '');
+    if (namaBersih.length > 2) document.getElementById('trf_penerima').value = namaBersih.toUpperCase();
+  }
+
+  // 5. Deteksi Kode Referensi
+  const refMatch = text.match(/(?:Ref|ID|Transaksi|No\.?\s*Ref)[\s:]*([A-Za-z0-9]{8,25})/i);
+  if (refMatch) {
+    document.getElementById('trf_ref').value = refMatch[1];
+  }
+}
 
 // ==================== NAVIGASI BOTTOM BAR ====================
 function pindahTab(namaTab) {
@@ -237,12 +307,15 @@ function getWaktuSekarang() {
   return { tgl: `${yyyy}-${mm}-${dd}`, jam: `${hh}:${ii}:${ss}`, lengkap: `${yyyy}-${mm}-${dd} ${hh}:${ii}:${ss}` };
 }
 
-// ==================== RENDER STRUK THERMAL (FOOTER SUDAH RAPI) ====================
+// ==================== RENDER STRUK THERMAL (ANTI-KOSONG) ====================
 function renderStruk() {
+  const strukElement = document.getElementById('strukPreview');
+  if (!strukElement) return;
+
   const tipe = document.getElementById('tipeStruk').value;
-  const toko = document.getElementById('namaToko').value;
-  const cs = document.getElementById('csNumber').value;
-  const tid = document.getElementById('tidCode').value;
+  const toko = document.getElementById('namaToko') ? document.getElementById('namaToko').value : "WAHSTRUKNIH";
+  const cs = document.getElementById('csNumber') ? document.getElementById('csNumber').value : "0857-8024-3664";
+  const tid = document.getElementById('tidCode') ? document.getElementById('tidCode').value : "AD4ECF";
   const logo = localStorage.getItem('ws_logo');
   const waktu = getWaktuSekarang();
   let html = '';
@@ -256,18 +329,18 @@ function renderStruk() {
   html += `<div class="text-center font-bold text-xs tracking-widest mb-2">${toko}</div>`;
 
   if (tipe === 'transfer') {
-    const bank = document.getElementById('trf_bank').value;
-    const rek = document.getElementById('trf_rek').value;
-    const penerima = document.getElementById('trf_penerima').value;
+    const bank = document.getElementById('trf_bank').value || "BRI";
+    const rek = document.getElementById('trf_rek').value || "-";
+    const penerima = document.getElementById('trf_penerima').value || "-";
     const nominal = parseInt(document.getElementById('trf_nominal').value) || 0;
     const admin = parseInt(document.getElementById('trf_admin').value) || 0;
-    const ref = document.getElementById('trf_ref').value;
+    const ref = document.getElementById('trf_ref').value || "-";
     const total = nominal + admin;
 
-    const fiturPengirimAktif = document.getElementById('togglePengirim').checked;
+    const fiturPengirimAktif = document.getElementById('togglePengirim') ? document.getElementById('togglePengirim').checked : true;
     const listPengirim = getDaftarPengirim();
-    const selectVal = document.getElementById('selectPengirimAktif').value;
-    const pengirimAktif = listPengirim.find(p => p.id == selectVal) || listPengirim[0] || { nama: "-", bank: "-", rek: "-" };
+    const selectVal = document.getElementById('selectPengirimAktif') ? document.getElementById('selectPengirimAktif').value : null;
+    const pengirimAktif = listPengirim.find(p => p.id == selectVal) || listPengirim[0] || { nama: "KONTER", bank: "BANK", rek: "xxxx" };
 
     html += `
       <div class="my-1 text-center">================================</div>
@@ -302,11 +375,10 @@ function renderStruk() {
       <div class="my-1 text-center">================================</div>
     `;
   } else {
-    // STRUK TOKEN PLN
-    const token = document.getElementById('pln_token').value;
-    const nama = document.getElementById('pln_nama').value;
-    const meter = document.getElementById('pln_meter').value;
-    const kwh = document.getElementById('pln_kwh').value;
+    const token = document.getElementById('pln_token').value || "-";
+    const nama = document.getElementById('pln_nama').value || "-";
+    const meter = document.getElementById('pln_meter').value || "-";
+    const kwh = document.getElementById('pln_kwh').value || "-";
     const total = parseInt(document.getElementById('pln_total').value) || 0;
 
     const tokenParts = token.split(' ');
@@ -333,7 +405,7 @@ function renderStruk() {
     `;
   }
 
-  // FOOTER SUDAH DIPERBAIKI (TIDAK ADA KATA "ANDA" NYASAR)
+  // FOOTER SUDAH RAPI & TIDAK ANEH
   html += `
     <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
     <div class="text-center text-[10px]">TERIMA KASIH ATAS</div>
@@ -345,7 +417,7 @@ function renderStruk() {
     <div class="text-center text-[10px] mt-0.5 font-mono">TID: ${tid}</div>
   `;
 
-  document.getElementById('strukPreview').innerHTML = html;
+  strukElement.innerHTML = html;
 }
 
 // ==================== SISTEM RIWAYAT TRANSAKSI ====================
@@ -362,12 +434,12 @@ function simpanKeRiwayat(item) {
 }
 
 function renderRiwayat() {
-  const list = getRiwayat();
   const container = document.getElementById('containerListRiwayat');
   const summaryTrx = document.getElementById('summaryJumlahTrx');
   const summaryNominal = document.getElementById('summaryTotalNominal');
+  if (!container) return;
 
-  container.innerHTML = '';
+  const list = getRiwayat();
   summaryTrx.innerText = `${list.length} Transaksi`;
 
   let totalUang = 0;
@@ -383,6 +455,7 @@ function renderRiwayat() {
     return;
   }
 
+  container.innerHTML = '';
   list.forEach(item => {
     totalUang += item.total;
     const card = document.createElement('div');
@@ -510,9 +583,9 @@ async function cetakLangsung() {
   }
 
   const tipe = document.getElementById('tipeStruk').value;
-  const toko = document.getElementById('namaToko').value;
-  const cs = document.getElementById('csNumber').value;
-  const tid = document.getElementById('tidCode').value;
+  const toko = document.getElementById('namaToko') ? document.getElementById('namaToko').value : "WAHSTRUKNIH";
+  const cs = document.getElementById('csNumber') ? document.getElementById('csNumber').value : "0857-8024-3664";
+  const tid = document.getElementById('tidCode') ? document.getElementById('tidCode').value : "AD4ECF";
   const waktu = getWaktuSekarang();
 
   const ESC = "\x1B";
@@ -529,7 +602,7 @@ async function cetakLangsung() {
     const ref = document.getElementById('trf_ref').value;
     const total = nominal + admin;
 
-    const fiturPengirimAktif = document.getElementById('togglePengirim').checked;
+    const fiturPengirimAktif = document.getElementById('togglePengirim') ? document.getElementById('togglePengirim').checked : true;
     const listPengirim = getDaftarPengirim();
     const selectVal = document.getElementById('selectPengirimAktif').value;
     const pengirimAktif = listPengirim.find(p => p.id == selectVal) || listPengirim[0] || { nama: "-", bank: "-", rek: "-" };
@@ -574,7 +647,6 @@ async function cetakLangsung() {
     });
 
   } else {
-    // TOKEN PLN
     const token = document.getElementById('pln_token').value;
     const nama = document.getElementById('pln_nama').value;
     const meter = document.getElementById('pln_meter').value;
@@ -617,7 +689,6 @@ async function cetakLangsung() {
     });
   }
 
-  // FOOTER PRINTER SUDAH RAPI & TERSTRUKTUR
   printData += rataTengah("--------------------------------");
   printData += rataTengah("** TRANSAKSI BERHASIL **");
   printData += rataTengah("TERIMA KASIH ATAS");
