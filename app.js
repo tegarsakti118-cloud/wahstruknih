@@ -17,14 +17,25 @@ const defaultPengirimList = [
   { id: 2, nama: "TEGXXX DISXX SAKXXXXXX", bank: "BRI", rek: "5655 XXXX XXXX 539", isDefault: true }
 ];
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   muatPengaturanTersimpan();
   inisialisasiPengirim();
 
-  // Tangkap Share Teks dari e-wallet jika ada
+  // 1. Cek apakah ada kiriman teks langsung via URL (GET)
   const urlParams = new URLSearchParams(window.location.search);
   const sharedText = urlParams.get('text') || urlParams.get('title') || '';
   if (sharedText) parseTeksEwallet(sharedText);
+
+  // 2. Cek apakah ada kiriman dari e-wallet via Service Worker (POST)
+  if (urlParams.get('shared') === 'true') {
+    const cache = await caches.open('wahstruk-share');
+    const cachedText = await cache.match('shared-text');
+    if (cachedText) {
+      const text = await cachedText.text();
+      parseTeksEwallet(text);
+      await cache.delete('shared-text');
+    }
+  }
 
   renderStruk();
   renderRiwayat();
