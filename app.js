@@ -97,7 +97,7 @@ async function scanGambarDenganFilterCerdas(imageBlob) {
   if (loading) loading.classList.remove('hidden');
 
   try {
-    statusText.innerText = "Membaca bukti transfer...";
+    statusText.innerText = "Membaca bukti transaksi...";
     const gambarBersih = await bersihkanIkonGambar(imageBlob);
 
     const result = await Tesseract.recognize(gambarBersih, 'eng', {
@@ -115,7 +115,7 @@ async function scanGambarDenganFilterCerdas(imageBlob) {
   }
 }
 
-// ==================== PARSER MASTER LENGKAP ====================
+// ==================== PARSER MASTER PRESISI ====================
 function parseBuktiTransferPresisi(rawText) {
   if (!rawText) return;
 
@@ -123,48 +123,49 @@ function parseBuktiTransferPresisi(rawText) {
   const oneLine = rawText.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ');
 
   // ==========================================
-  // JALUR 1: TOKEN LISTRIK PRABAYAR PLN
+  // JALUR 1: STRUK TOKEN LISTRIK PLN (PERSIS FOTO ASLI)
   // ==========================================
-  if (/PLN|TOKEN|METER|STROOM|KWH/i.test(oneLine) && !/Send Money|Hasil Transfer|Transfer Berhasil/i.test(oneLine)) {
+  if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA/i.test(oneLine)) {
     document.getElementById('tipeStruk').value = 'token';
     gantiTipeStruk();
-    
-    // A. 20 Digit Angka Token
+
+    // A. 20 Digit Angka Token (Contoh: 4949-2577-3479-4880-0611)
     const tokenMatch = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
     if (tokenMatch) {
       document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
     }
-    
-    // B. Total Bayar
-    const nominalMatch = oneLine.match(/(?:Total|Nominal|Rp)[\s.:]*([\d\.,]+)/i) || oneLine.match(/(\d{1,3}(?:[.,]\d{3})+)/);
-    if (nominalMatch) {
-      document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
-    }
 
-    // C. No Meter / ID Pelanggan (11-12 Digit)
-    let noMeter = "";
-    const meterMatch = oneLine.match(/(?:No\.?\s*Meter|ID\s*Pel(?:anggan)?|No\.?\s*Pelanggan|IDPEL|Meteran)[^\d]*(\d{11,13})/i);
+    // B. No Meter / ID PLN (Contoh: 50201220816)
+    const meterMatch = oneLine.match(/(?:ID\s*PLN|No\.?\s*Meter|ID\s*Pel|IDPEL)[\s.:]*([0-9]{10,13})/i);
     if (meterMatch) {
-      noMeter = meterMatch[1];
+      document.getElementById('pln_meter').value = meterMatch[1].trim();
     } else {
-      const all11Digits = oneLine.match(/\b\d{11,12}\b/g) || [];
-      if (all11Digits.length > 0) noMeter = all11Digits[0];
+      const any11Digits = oneLine.match(/\b\d{11,12}\b/g) || [];
+      if (any11Digits.length > 0) document.getElementById('pln_meter').value = any11Digits[0];
     }
-    if (noMeter) document.getElementById('pln_meter').value = noMeter;
 
-    // D. Nama Pelanggan Token
-    const namaPlnMatch = oneLine.match(/(?:Nama\s*Pelanggan|Nama)[\s.:]*([A-Za-z\s.'’]{3,30})(?:\s+Tarif|\s+Daya|\s+Kwh|\s+Total|\s+Rp|\s+No|$)/i);
+    // C. Nama Pelanggan (Contoh: SRI DEWI)
+    const namaPlnMatch = oneLine.match(/NAMA[\s.:]+([A-Za-z\s.'’]{3,30}?)(?:\s+TARIF|\s+DAYA|\s+JUMLAH|\s+PRODUK|\s+HARGA|\s+TOTAL|\s+ID|$)/i);
     if (namaPlnMatch) {
-      let n = namaPlnMatch[1].trim().replace(/(TOKEN|LISTRIK|PRABAYAR|PLN|BERHASIL)/gi, '').trim();
-      if (n.length > 2) document.getElementById('pln_nama').value = n.toUpperCase();
+      document.getElementById('pln_nama').value = namaPlnMatch[1].trim().toUpperCase();
     }
 
-    // E. Jumlah KWH
-    const kwhMatch = oneLine.match(/(?:Jumlah\s*Kwh|Kwh)[\s.:]*([0-9.,]+(?:\s*KWH)?)/i) || oneLine.match(/(\d+[.,]\d{1,3}\s*KWH)/i);
+    // D. Jumlah Daya / KWH (Contoh: 30.10 KWH)
+    const kwhMatch = oneLine.match(/(?:JUMLAH\s*DAYA|JUMLAH\s*KWH|KWH)[\s.:]*([0-9.,]+\s*KWH)/i) || oneLine.match(/([0-9.,]+\s*KWH)/i);
     if (kwhMatch) {
-      let k = kwhMatch[1].trim().toUpperCase();
-      if (!k.includes("KWH")) k += "KWH";
-      document.getElementById('pln_kwh').value = k;
+      document.getElementById('pln_kwh').value = kwhMatch[1].replace(/\s+/g, '').toUpperCase();
+    }
+
+    // E. Total Bayar / Harga (Contoh: Rp 25.000)
+    const hargaMatch = oneLine.match(/(?:HARGA|TOTAL|TAGIHAN)[\s.:]*Rp?\s*([\d.,]+)/i) || oneLine.match(/Rp\s*([\d.,]+)/i);
+    if (hargaMatch) {
+      document.getElementById('pln_total').value = parseInt(hargaMatch[1].replace(/[\.,]/g, ''));
+    }
+
+    // F. ID TRX / Ref (Contoh: 1462747568)
+    const idTrxMatch = oneLine.match(/(?:ID\s*TRX|NO\.?\s*REF|REF)[\s.:]*([0-9]{8,16})/i);
+    if (idTrxMatch) {
+      localStorage.setItem('ws_pln_ref', idTrxMatch[1].trim());
     }
 
     return;
@@ -194,11 +195,11 @@ function parseBuktiTransferPresisi(rawText) {
     }
   }
 
-  // --- SUB-JALUR A: DANA ---
+  // ==================== SUB-JALUR A: DANA ====================
   const isDANA = /DANA/i.test(oneLine) || /Send\s*Money|Receiver\s*Detail|Total\s*Payment|Transaction\s*success/i.test(oneLine);
 
   if (isDANA) {
-    // Nama & Bank dari ringkasan DANA
+    // A. Nama Penerima & Bank DANA
     const danaNamaMatch = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-_–~.]*\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|BANK\s*[A-Z]+)/i);
     if (danaNamaMatch) {
       namaPenerima = danaNamaMatch[1].trim();
@@ -218,21 +219,17 @@ function parseBuktiTransferPresisi(rawText) {
       else if (/BNI/i.test(oneLine)) bankTujuan = "BNI";
     }
 
-    // No Rekening DANA (Menyatukan angka yang terpotong baris baru: ••••45 38 -> ••••4538)
-    const danaMasked = oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/);
-    if (danaMasked) {
-      rekTujuan = "••••" + danaMasked[1].replace(/\s/g, '');
+    // B. No Rekening DANA (Tangkap angka 4 digit di belakang nama bank atau sensor ••••)
+    const danaRekMatch = oneLine.match(/(?:Seabank|BCA|BRI|BNI|Mandiri|Bank)[A-Za-z\s]*?[•*.\s-_]*?(\d[\d\s]{2,5})\b/i) || oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/);
+    if (danaRekMatch) {
+      const bersihAngka = danaRekMatch[1].replace(/\s/g, '');
+      rekTujuan = "••••" + bersihAngka.slice(-4);
     } else {
-      const bRek = oneLine.match(/(?:Seabank|BRI|BCA|Mandiri|BNI|Bank)[A-Za-z\s]*?[•*.\s-_]*?(\d{2,4}\s*\d{2,4})\b/i);
-      if (bRek) {
-        rekTujuan = "••••" + bRek[1].replace(/\s/g, '').slice(-4);
-      } else {
-        const danaPhone = oneLine.match(/\b(08[0-9•*.-]{8,15})\b/);
-        if (danaPhone) rekTujuan = danaPhone[1].replace(/\s/g, '');
-      }
+      const danaPhone = oneLine.match(/\b(08[0-9•*.-]{8,15})\b/);
+      if (danaPhone) rekTujuan = danaPhone[1].replace(/\s/g, '');
     }
 
-    // Kode Referensi DANA
+    // C. Kode Referensi DANA
     const extSn = oneLine.match(/External\s*Serial\s*Number\s*([0-9\s]{10,25})/i);
     if (extSn) {
       kodeRef = extSn[1].replace(/\s/g, '');
@@ -242,13 +239,13 @@ function parseBuktiTransferPresisi(rawText) {
     }
   }
 
-  // --- SUB-JALUR B: QITA BY BRI ---
+  // ==================== SUB-JALUR B: QITA BY BRI ====================
   const isQitaBRI = /Qita|Transfer\s*Bank\s*BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("Referensi"));
 
   if (isQitaBRI && (!namaPenerima || !rekTujuan)) {
     bankTujuan = "BRI";
 
-    // No. Referensi 12 Digit BRI
+    // No. Referensi 12 Digit BRI (Contoh: 239773648905)
     const bri12Digits = oneLine.match(/\b\d{12}\b/g) || [];
     for (const d of bri12Digits) {
       if (!rekTujuan.includes(d)) {
@@ -281,7 +278,7 @@ function parseBuktiTransferPresisi(rawText) {
     }
   }
 
-  // --- SUB-JALUR C: SEABANK ---
+  // ==================== SUB-JALUR C: SEABANK ====================
   const isSeaBank = /Hasil\s*Transfer|Pembayaran\s*Diterima|SeaBank/i.test(oneLine) || oneLine.includes("Jumlah Transfer");
 
   if (isSeaBank && (!namaPenerima || !rekTujuan)) {
@@ -296,7 +293,7 @@ function parseBuktiTransferPresisi(rawText) {
     }
   }
 
-  // --- FALLBACK FORMAT LAIN ---
+  // ==================== FALLBACK UMUM ====================
   if (!bankTujuan) {
     if (/SEABANK/i.test(oneLine)) bankTujuan = "SEABANK";
     else if (/BCA/i.test(oneLine)) bankTujuan = "BCA";
@@ -597,6 +594,7 @@ function renderStruk() {
     const meter = document.getElementById('pln_meter').value || "-";
     const kwh = document.getElementById('pln_kwh').value || "-";
     const total = parseInt(document.getElementById('pln_total').value) || 0;
+    const refPln = localStorage.getItem('ws_pln_ref') || "1462747568";
 
     const tokenParts = token.split(' ');
     const baris1 = tokenParts.slice(0, 3).join(' ') || token.substring(0, 14);
@@ -618,7 +616,7 @@ function renderStruk() {
       <div class="flex justify-between"><span>KWH      :</span><span>${kwh}</span></div>
       <div class="my-1 text-center">--------------------------------</div>
       <div class="flex justify-between font-bold"><span>TOTAL</span><span>RP ${total.toLocaleString('id-ID')}</span></div>
-      <div class="flex justify-between text-[10px]"><span>REF:</span><span class="font-mono">${Math.floor(100000000 + Math.random() * 900000000)}</span></div>
+      <div class="flex justify-between text-[10px]"><span>REF:</span><span class="font-mono">${refPln}</span></div>
     `;
   }
 
@@ -868,6 +866,7 @@ async function cetakLangsung() {
     const meter = document.getElementById('pln_meter').value;
     const kwh = document.getElementById('pln_kwh').value;
     const total = parseInt(document.getElementById('pln_total').value) || 0;
+    const refPln = localStorage.getItem('ws_pln_ref') || "1462747568";
 
     const tokenParts = token.split(' ');
     const baris1 = tokenParts.slice(0, 3).join(' ') || token.substring(0, 14);
@@ -890,7 +889,7 @@ async function cetakLangsung() {
     printData += formatBaris("KWH      :", kwh);
     printData += rataTengah("--------------------------------");
     printData += formatBaris("TOTAL", `RP ${total.toLocaleString('id-ID')}`);
-    printData += formatBaris("REF:", "1451014994");
+    printData += formatBaris("REF:", refPln);
 
     simpanKeRiwayat({
       id: Date.now(),
@@ -900,7 +899,7 @@ async function cetakLangsung() {
       nominal: total,
       admin: 0,
       total: total,
-      ref: "1451014994",
+      ref: refPln,
       data: { token, nama, meter, kwh }
     });
   }
