@@ -92,7 +92,7 @@ async function scanGambarBukti(imageBlob) {
   }
 }
 
-// ==================== FUNGSI PARSER TEKS / OCR ====================
+// ==================== FUNGSI PARSER SAKTI BUKTI E-WALLET (FIXED) ====================
 function parseTeksEwallet(text) {
   if (!text) return;
 
@@ -105,7 +105,7 @@ function parseTeksEwallet(text) {
     if (tokenMatch) {
       document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
     }
-    const nominalMatch = text.match(/Rp\s*([\d\.,]+)/i) || text.match(/(\d{1,3}(?:[.,]\d{3})+)/);
+    const nominalMatch = text.match(/(?:Total|Nominal|Rp)[\s.:]*([\d\.,]+)/i) || text.match(/(\d{1,3}(?:[.,]\d{3})+)/);
     if (nominalMatch) {
       document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
     }
@@ -128,30 +128,58 @@ function parseTeksEwallet(text) {
   else if (/GOPAY/i.test(text)) document.getElementById('trf_bank').value = "GOPAY";
   else if (/OVO/i.test(text)) document.getElementById('trf_bank').value = "OVO";
 
-  // 2. Deteksi Nominal Transfer
+  // 2. Deteksi Nominal Transfer (Cari nominal angka di atas Rp 1.000)
   const nominalMatch = text.match(/(?:Nominal|Jumlah|Total|Sebesar|Rp)[\s.:]*Rp?\s*([\d\.,]+)/i) || text.match(/Rp\s*([\d\.,]+)/i);
   if (nominalMatch) {
     const bersih = nominalMatch[1].replace(/[\.,]/g, '');
-    document.getElementById('trf_nominal').value = parseInt(bersih);
+    if (parseInt(bersih) >= 1000) {
+      document.getElementById('trf_nominal').value = parseInt(bersih);
+    }
   }
 
-  // 3. Deteksi No. Rekening Tujuan (Pola 9-18 digit angka)
-  const rekMatch = text.match(/(?:Ke|Tujuan|Rekening|No\.?\s*Rek)[\s.:]*([0-9]{9,18})/i) || text.match(/([0-9]{10,16})/);
-  if (rekMatch) {
-    document.getElementById('trf_rek').value = rekMatch[1];
-  }
-
-  // 4. Deteksi Nama Penerima
-  const penerimaMatch = text.match(/(?:Penerima|Ke|Nama)[\s:]*([A-Za-z\s]{3,30})(?:\n|\r|Bank|Rp|$)/i);
-  if (penerimaMatch) {
-    const namaBersih = penerimaMatch[1].trim().replace(/(BCA|BRI|MANDIRI|DANA|BERHASIL|TRANSFER)/gi, '').trim();
-    if (namaBersih.length > 2) document.getElementById('trf_penerima').value = namaBersih.toUpperCase();
-  }
-
-  // 5. Deteksi Kode Referensi
-  const refMatch = text.match(/(?:Ref|ID|Transaksi|No\.?\s*Ref)[\s.:]*([A-Za-z0-9]{8,25})/i);
+  // 3. Deteksi Kode Referensi (WAJIB mengandung angka, bukan cuma kata 'Transfer')
+  let kodeRef = "";
+  const refMatch = text.match(/(?:No\.?\s*Ref(?:erensi)?|Reff|ID\s*Transaksi|No\.\s*Transaksi|Order\s*ID)[\s.:]*([A-Za-z0-9]{8,25})/i);
   if (refMatch) {
-    document.getElementById('trf_ref').value = refMatch[1];
+    const candidate = refMatch[1].trim();
+    // Validasi: harus mengandung angka dan bukan kata generic
+    if (/\d/.test(candidate) && !/^(TRANSFER|BERHASIL|SUKSES|TRANSAKSI)$/i.test(candidate)) {
+      kodeRef = candidate;
+    }
+  }
+
+  // 4. Deteksi No. Rekening Tujuan (Harus beda dengan No. Referensi)
+  let noRek = "";
+  const rekMatch = text.match(/(?:Rekening\s*Tujuan|No\.?\s*Rekening|No\.?\s*Tujuan|Ke\s*Rekening|Rekening|No\.?\s*Hp|Nomor)[\s.:]*([0-9]{8,20})/i);
+  if (rekMatch) {
+    noRek = rekMatch[1].trim();
+  }
+
+  // Jika kode referensi belum dapat tapi ada nomor 10-18 digit
+  const semuaAngka = text.match(/\b\d{10,20}\b/g) || [];
+  if (semuaAngka.length > 0) {
+    if (!kodeRef && semuaAngka[0] !== noRek) {
+      kodeRef = semuaAngka[0];
+    } else if (!noRek && semuaAngka[0] !== kodeRef) {
+      noRek = semuaAngka[0];
+    }
+  }
+
+  if (kodeRef) document.getElementById('trf_ref').value = kodeRef;
+  if (noRek) document.getElementById('trf_rek').value = noRek;
+
+  // 5. Deteksi Nama Penerima (Filter kata 'UANG', 'KIRIM', dll)
+  const penerimaMatch = text.match(/(?:Penerima|Ke\s*Rekening|Atas\s*Nama|a\.n\.?|Nama)[\s.:]*([A-Za-z\s.'’]{3,35})(?:\n|\r|Bank|Rp|$)/i);
+  if (penerimaMatch) {
+    let namaBersih = penerimaMatch[1].trim();
+    // Buang kata-kata sampah
+    namaBersih = namaBersih.replace(/^(KIRIM\s*UANG|UANG\s*MASUK|TRANSFER|KE|A\.N\.?|AN|DANA|BCA|BRI|MANDIRI|BERHASIL)\s*/gi, '').trim();
+    namaBersih = namaBersih.replace(/\s*(BCA|BRI|MANDIRI|BNI|DANA|BERHASIL)$/gi, '').trim();
+    
+    // Jangan izinkan cuma kata 'UANG' atau 'UANGAN'
+    if (namaBersih.length > 2 && !/^(UANG|UANGAN|DANA|TRANSFER)$/i.test(namaBersih)) {
+      document.getElementById('trf_penerima').value = namaBersih.toUpperCase();
+    }
   }
 }
 
