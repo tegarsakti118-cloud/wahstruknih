@@ -40,26 +40,19 @@
         </select>
       </div>
 
-      <!-- INDIKATOR SCAN OCR REALTIME -->
-      <div id="loadingOcr" class="bg-blue-600 text-white p-3.5 rounded-2xl shadow-lg shadow-blue-600/20 flex items-center justify-between text-xs font-bold hidden animate-pulse">
-        <div class="flex items-center gap-2">
-          <span class="text-base">🔍</span>
-          <span id="ocrStatusText">Sedang mempertajam & membaca foto...</span>
+      <!-- NOTIFIKASI PROSES SENYAP (SEPERTI TRFBT) -->
+      <div id="loadingOcr" class="bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between text-xs font-semibold hidden transition-all">
+        <div class="flex items-center gap-2.5">
+          <svg class="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span id="ocrStatusText">Membaca bukti transfer...</span>
         </div>
-        <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">Mohon tunggu</span>
+        <span class="text-[10px] text-slate-400">Otomatis</span>
       </div>
 
-      <!-- KOTAK BANTUAN HASIL DETEKSI TEKS (BISA DIKLIK LANGSUNG ISI FORM) -->
-      <details id="boxDebugOcr" class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs hidden">
-        <summary class="font-bold text-amber-900 cursor-pointer flex justify-between items-center">
-          <span>📝 Teks Terbaca dari Bukti (Klik Baris Buat Koreksi)</span>
-        </summary>
-        <div id="listBarisOcr" class="mt-2 space-y-1 max-h-36 overflow-y-auto font-mono text-[10px] bg-white p-2 rounded-xl border border-amber-100">
-          <!-- Diisi otomatis oleh app.js -->
-        </div>
-      </details>
-
-      <!-- FORM TRANSFER (BEBAS DATA DUMMY) -->
+      <!-- FORM TRANSFER (TAMPILAN BERSIH) -->
       <div id="formTransfer" class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 space-y-3 text-xs">
         <div>
           <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Kirim Dari Rekening:</label>

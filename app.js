@@ -791,5 +791,3 @@ async function kirimBytesKePrinter(str) {
     await new Promise(r => setTimeout(r, 20));
   }
 }
-
-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
