@@ -76,7 +76,7 @@ async function bersihkanIkonGambar(blob) {
         const isColor = Math.abs(r - g) > 28 || Math.abs(r - b) > 28 || Math.abs(g - b) > 28;
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
-        if (isColor || brightness > 130) {
+        if (isColor || brightness > 135) {
           d[i] = d[i+1] = d[i+2] = 255;
         } else {
           d[i] = d[i+1] = d[i+2] = 0;
@@ -97,7 +97,7 @@ async function scanGambarDenganFilterCerdas(imageBlob) {
   if (loading) loading.classList.remove('hidden');
 
   try {
-    statusText.innerText = "Membersihkan gambar & membaca data...";
+    statusText.innerText = "Membaca bukti transfer...";
     const gambarBersih = await bersihkanIkonGambar(imageBlob);
 
     const result = await Tesseract.recognize(gambarBersih, 'eng', {
@@ -105,7 +105,7 @@ async function scanGambarDenganFilterCerdas(imageBlob) {
     });
 
     const teksHasil = result.data.text;
-    console.log("HASIL SCAN OCR:\n", teksHasil);
+    console.log("HASIL SCAN OCR RAW:\n", teksHasil);
     parseBuktiTransferPresisi(teksHasil);
   } catch (err) {
     console.error("Gagal scan:", err);
@@ -115,27 +115,27 @@ async function scanGambarDenganFilterCerdas(imageBlob) {
   }
 }
 
-// ==================== PARSER MASTER (DANA, SEABANK, QITA BRI, BCA) ====================
+// ==================== PARSER MASTER (DANA, QITA BRI, SEABANK) ====================
 function parseBuktiTransferPresisi(rawText) {
   if (!rawText) return;
 
-  const cleanText = rawText.replace(/\r/g, '');
-  const lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  // LEBUR SEMUA ENTER JADI 1 ALIRAN TEKS PANJANG (ANTI-TERPOTONG BARIS BARU)
+  const oneLine = rawText.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ');
 
-  // --- CEK JIKA TOKEN LISTRIK PLN ---
-  if (/PLN|TOKEN|METER/i.test(cleanText)) {
+  // --- CEK TOKEN LISTRIK PLN ---
+  if (/PLN|TOKEN|METER/i.test(oneLine)) {
     document.getElementById('tipeStruk').value = 'token';
     gantiTipeStruk();
     
-    const tokenMatch = cleanText.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
+    const tokenMatch = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
     if (tokenMatch) document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
     
-    const nominalMatch = cleanText.match(/(?:Total|Nominal|Rp)[\s.:]*([\d\.,]+)/i) || cleanText.match(/(\d{1,3}(?:[.,]\d{3})+)/);
+    const nominalMatch = oneLine.match(/(?:Total|Nominal|Rp)[\s.:]*([\d\.,]+)/i) || oneLine.match(/(\d{1,3}(?:[.,]\d{3})+)/);
     if (nominalMatch) document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
     return;
   }
 
-  // --- FORM TRANSFER ---
+  // --- MODE TRANSFER BANK ---
   document.getElementById('tipeStruk').value = 'transfer';
   gantiTipeStruk();
 
@@ -145,8 +145,8 @@ function parseBuktiTransferPresisi(rawText) {
   let nominalTrf = 0;
   let kodeRef = "";
 
-  // 1. CARI NOMINAL TRANSFER (Bekerja di semua format: Rp200.000 / Rp 100.000)
-  const nomMatches = cleanText.match(/Rp\s*([\d\.,]+)/gi);
+  // 1. CARI NOMINAL (Contoh: Rp200.000 / Rp 100.000 / Rp1.150.000)
+  const nomMatches = oneLine.match(/Rp\s*([\d\.,]+)/gi);
   if (nomMatches) {
     for (const nm of nomMatches) {
       const val = parseInt(nm.replace(/[^0-9]/g, ''));
@@ -157,153 +157,127 @@ function parseBuktiTransferPresisi(rawText) {
     }
   }
 
-  // ==================== A. LOGIKA KHUSUS DANA (FOTO 3) ====================
-  const isDANA = /DANA/i.test(cleanText) || /Send Money|Receiver Detail|Total Payment|Transaction success/i.test(cleanText);
+  // ==================== JALUR 1: DANA (SESUAI FOTO DANA USER) ====================
+  // Contoh DANA: "Send Money Rp200.000 to TEGAR DISTA SAKTIAWAN - Seabank Indonesia ••••4538"
+  const isDANA = /DANA/i.test(oneLine) || /Send Money|Receiver Detail|Total Payment|Transaction success/i.test(oneLine);
 
   if (isDANA) {
-    // 1. Ekstrak dari baris emas DANA: "Send Money Rp200.000 to TEGAR DISTA SAKTIAWAN - Seabank Indonesia ••••4538"
-    const danaSummary = cleanText.match(/(?:Send Money|Kirim Uang)\s*Rp?[\d.,]+\s*(?:to|ke)\s*([A-Za-z\s.'’]+?)\s*[-–]\s*([A-Za-z\s]+)\s*([•*.\s\d]*\d{4})/i);
-    if (danaSummary) {
-      namaPenerima = danaSummary[1].trim();
-      const b = danaSummary[2].trim();
-      if (/SEABANK/i.test(b)) bankTujuan = "SEABANK";
-      else if (/BRI/i.test(b)) bankTujuan = "BRI";
-      else if (/BCA/i.test(b)) bankTujuan = "BCA";
-      else if (/MANDIRI/i.test(b)) bankTujuan = "MANDIRI";
-      else if (/BNI/i.test(b)) bankTujuan = "BNI";
-      else bankTujuan = b.toUpperCase();
+    // Tangkap nama, bank, dan no rekening dari kalimat ringkasan DANA
+    const danaMatch = oneLine.match(/(?:Send Money|Kirim Uang)\s*Rp?[\d.,]+\s*(?:to|ke)\s*([A-Za-z\s.'’]+?)\s*[-–]\s*([A-Za-z\s]+?)\s*([•*.\s\d]*\d{4})/i);
+    
+    if (danaMatch) {
+      namaPenerima = danaMatch[1].trim();
+      const b = danaMatch[2].trim().toUpperCase();
+      if (b.includes("SEABANK")) bankTujuan = "SEABANK";
+      else if (b.includes("BRI")) bankTujuan = "BRI";
+      else if (b.includes("BCA")) bankTujuan = "BCA";
+      else if (b.includes("MANDIRI")) bankTujuan = "MANDIRI";
+      else if (b.includes("BNI")) bankTujuan = "BNI";
+      else bankTujuan = b;
 
-      rekTujuan = danaSummary[3].replace(/\s/g, '');
+      rekTujuan = danaMatch[3].replace(/\s/g, ''); // Contoh: ••••4538
     }
 
-    // 2. Jika nama belum dapat, ambil dari bagian "Receiver Detail -> Name"
+    // Jika nama masih belum dapat, cari di bagian "Receiver Detail Name"
     if (!namaPenerima) {
-      for (let i = 0; i < lines.length; i++) {
-        if (/^Name$/i.test(lines[i]) || /^Nama$/i.test(lines[i])) {
-          let n = lines[i+1] || "";
-          if (lines[i+2] && !/Bank|Account|Nominal|Rp/i.test(lines[i+2]) && lines[i+2].length <= 5) {
-            n += " " + lines[i+2]; // Tangani kata yang turun ke baris baru seperti 'AN'
-          }
-          namaPenerima = n.replace(/[^A-Za-z\s.'’]/g, '').trim();
-        }
-        if (/Bank Account|Akun Bank/i.test(lines[i])) {
-          const accLine = lines[i+1] || lines[i];
-          const rekM = accLine.match(/([•*.\s\d]*\d{4,18})/);
-          if (rekM && !rekTujuan) rekTujuan = rekM[1].replace(/\s/g, '');
-          const bM = accLine.match(/(SEABANK|BRI|BCA|MANDIRI|BNI|JAGO)/i);
-          if (bM && !bankTujuan) bankTujuan = bM[1].toUpperCase();
-        }
+      const nameField = oneLine.match(/(?:Receiver Detail|Detail Penerima).*?(?:Name|Nama)\s+([A-Za-z\s.'’]{3,35})\s+(?:Bank Account|Akun Bank|Nominal)/i);
+      if (nameField) {
+        namaPenerima = nameField[1].trim();
       }
     }
 
-    // 3. Kode Referensi DANA: Ambil External Serial Number atau Transaction ID
-    const extSn = cleanText.match(/External Serial Number[\s:]*([0-9\s]{10,25})/i);
+    // Kode Referensi DANA: Ambil External Serial Number atau baris pertama Transaction ID
+    const extSn = oneLine.match(/External Serial Number\s*([0-9\s]{10,25})/i);
     if (extSn) {
       kodeRef = extSn[1].replace(/\s/g, '');
     } else {
-      const txId = cleanText.match(/Transaction ID[\s:]*([0-9\s]{15,40})/i);
+      const txId = oneLine.match(/Transaction ID\s*([0-9\s]{15,40})/i);
       if (txId) {
-        // Ambil baris pertama Transaction ID (18 digit) agar pas di kertas struk
         kodeRef = txId[1].replace(/\s/g, '').substring(0, 18);
       }
     }
   }
 
-  // ==================== B. LOGIKA KHUSUS QITA / BRI (FOTO 2) ====================
-  const isQitaBRI = /Qita|Transfer Bank BRI/i.test(cleanText) || (cleanText.includes("BANK BRI") && cleanText.includes("No. Referensi"));
+  // ==================== JALUR 2: QITA BY BRI (SESUAI FOTO QITA BRI USER) ====================
+  // Contoh Qita BRI: "... SARTO BANK BRI - 5655 0104 2551 532 No. Referensi 239773648905 ..."
+  const isQitaBRI = /Qita|Transfer Bank BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("No. Referensi"));
 
   if (isQitaBRI && (!namaPenerima || !rekTujuan)) {
     bankTujuan = "BRI";
 
-    const briRef = cleanText.match(/No\.?\s*Referensi[\s:]*([0-9]{10,16})/i);
-    if (briRef) kodeRef = briRef[1];
+    // Cari No. Referensi BRI (12 digit angka murni: 239773648905)
+    const briRef = oneLine.match(/No\.?\s*Referensi\s*([0-9]{10,16})/i);
+    if (briRef) {
+      kodeRef = briRef[1];
+    }
 
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      if (/BANK\s*BRI/i.test(l) && !l.includes('*')) {
-        const numMatch = l.match(/[\d\s]{10,25}/);
-        if (numMatch) rekTujuan = numMatch[0].replace(/\s/g, '');
-        
-        if (i > 0 && lines[i-1] && !/Detail|Transaksi|BANK|Ref/i.test(lines[i-1])) {
-          namaPenerima = lines[i-1].replace(/[^A-Za-z\s.'’]/g, '').trim();
-        }
+    // Cari bagian penerima: nama yang diikuti oleh BANK BRI - [nomor tanpa bintang]
+    const qitaPenerimaMatch = oneLine.match(/([A-Za-z\s.'’]{3,30})\s+BANK\s*BRI\s*[-–]\s*([0-9\s]{12,25})/i);
+    if (qitaPenerimaMatch) {
+      const calonNama = qitaPenerimaMatch[1].trim();
+      const calonRek = qitaPenerimaMatch[2].replace(/\s/g, '');
+
+      // Pastikan bukan baris pengirim yang ada tanda bintangnya
+      if (!calonRek.includes('*')) {
+        namaPenerima = calonNama;
+        rekTujuan = calonRek;
+      }
+    }
+
+    // Jika rekeningnya masih belum terambil, cari deretan 15 digit angka yang dipisah spasi
+    if (!rekTujuan) {
+      const briRek = oneLine.match(/BANK\s*BRI\s*[-–]\s*([0-9\s]{14,22})/i);
+      if (briRek && !briRek[1].includes('*')) {
+        rekTujuan = briRek[1].replace(/\s/g, '');
       }
     }
   }
 
-  // ==================== C. LOGIKA KHUSUS SEABANK (FOTO 1) ====================
-  const isSeaBank = /Hasil Transfer|Pembayaran Diterima|SeaBank/i.test(cleanText) || cleanText.includes("Jumlah Transfer");
+  // ==================== JALUR 3: SEABANK (SESUAI FOTO SEABANK USER) ====================
+  // Contoh SeaBank: "Ke Dedi Setiadi BRI: 565501024429531 ... No. Transaksi 2026110343500497102338 503"
+  const isSeaBank = /Hasil Transfer|Pembayaran Diterima|SeaBank/i.test(oneLine) || oneLine.includes("Jumlah Transfer");
 
   if (isSeaBank && (!namaPenerima || !rekTujuan)) {
-    const seaRef = cleanText.match(/No\.?\s*Transaksi[\s:]*([0-9\s]{15,30})/i);
-    if (seaRef) kodeRef = seaRef[1].replace(/\s/g, '');
+    // Ambil No. Transaksi SeaBank
+    const seaRef = oneLine.match(/No\.?\s*Transaksi\s*([0-9\s]{15,30})/i);
+    if (seaRef) {
+      kodeRef = seaRef[1].replace(/\s/g, '');
+    }
 
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      if (/^Ke$/i.test(l) || /^Ke\b/i.test(l)) {
-        let calonNama = l.replace(/^Ke\s*/i, '').trim();
-        if (calonNama.length > 2 && !/Bank|Rp|Total|Transfer/i.test(calonNama)) {
-          namaPenerima = calonNama;
-        } else if (lines[i+1]) {
-          namaPenerima = lines[i+1];
-        }
-
-        for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
-          const rekLine = lines[j];
-          const bMatch = rekLine.match(/(BRI|BCA|MANDIRI|BNI|DANA|SEABANK|JAGO|SHOPEEPAY|OVO)/i);
-          const rMatch = rekLine.match(/(\d{9,20})/);
-          if (bMatch) bankTujuan = bMatch[1].toUpperCase();
-          if (rMatch) rekTujuan = rMatch[1];
-          if (bankTujuan && rekTujuan) break;
-        }
-      }
+    // Ambil Nama dan Rekening dari blok "Ke [Nama] [Bank]: [Norek]"
+    const seaKeMatch = oneLine.match(/Ke\s+([A-Za-z\s.'’]{3,30})\s+([A-Z]{3,10})[\s:]+([0-9]{9,20})/i);
+    if (seaKeMatch) {
+      namaPenerima = seaKeMatch[1].trim();
+      bankTujuan = seaKeMatch[2].toUpperCase();
+      rekTujuan = seaKeMatch[3].trim();
     }
   }
 
-  // ==================== D. FALLBACK FORMAT LAIN ====================
+  // ==================== JALUR 4: FALLBACK UMUM ====================
   if (!bankTujuan) {
-    if (/BCA/i.test(cleanText)) bankTujuan = "BCA";
-    else if (/BRI|BRIMO/i.test(cleanText)) bankTujuan = "BRI";
-    else if (/MANDIRI|LIVIN/i.test(cleanText)) bankTujuan = "MANDIRI";
-    else if (/BNI/i.test(cleanText)) bankTujuan = "BNI";
-    else if (/SEABANK/i.test(cleanText)) bankTujuan = "SEABANK";
-    else if (/DANA/i.test(cleanText)) bankTujuan = "DANA";
-    else if (/SHOPEE/i.test(cleanText)) bankTujuan = "SHOPEEPAY";
+    if (/SEABANK/i.test(oneLine)) bankTujuan = "SEABANK";
+    else if (/BCA/i.test(oneLine)) bankTujuan = "BCA";
+    else if (/BRI|BRIMO/i.test(oneLine)) bankTujuan = "BRI";
+    else if (/MANDIRI|LIVIN/i.test(oneLine)) bankTujuan = "MANDIRI";
+    else if (/BNI/i.test(oneLine)) bankTujuan = "BNI";
+    else if (/DANA/i.test(oneLine)) bankTujuan = "DANA";
+    else if (/SHOPEE/i.test(oneLine)) bankTujuan = "SHOPEEPAY";
   }
 
   if (!kodeRef) {
-    const genRef = cleanText.match(/(?:No\.?\s*Ref(?:erensi)?|No\.?\s*Transaksi|ID\s*Transaksi)[\s:]*([0-9]{10,28})/i);
+    const genRef = oneLine.match(/(?:No\.?\s*Ref(?:erensi)?|No\.?\s*Transaksi|ID\s*Transaksi)\s*([0-9]{10,28})/i);
     if (genRef) kodeRef = genRef[1];
   }
 
-  if (!namaPenerima) {
-    const genNama = cleanText.match(/(?:Penerima|Transfer\s*ke|Kirim\s*ke|a\.n\.?|Nama)[\s:]*([A-Za-z\s.'’]{3,30})/i);
-    if (genNama && !/DANA|BANK|TOTAL|NOMINAL|SEABANK|BRI/i.test(genNama[1])) {
-      namaPenerima = genNama[1].trim();
-    }
-  }
-
-  if (!rekTujuan) {
-    // Nomor rekening tidak boleh lebih dari 18 digit (karena >18 digit itu pasti ID Transaksi)
-    const allDigits = cleanText.match(/\b\d{9,18}\b/g) || [];
-    for (const d of allDigits) {
-      if (d !== kodeRef && d !== nominalTrf.toString()) {
-        rekTujuan = d;
-        break;
-      }
-    }
-  }
-
-  // ==================== PEMBERSIHAN NAMA DARI SIMBOL & ARTIFAK ====================
+  // ==================== PEMBERSIHAN NAMA DARI SAMPAH SISTEM ====================
   if (namaPenerima) {
     namaPenerima = namaPenerima.replace(/^[©®℗@0-9\W_]+/g, '').trim();
     namaPenerima = namaPenerima.replace(/[©®℗@]/g, '').trim();
-    if (/^Pedi Setiadi$/i.test(namaPenerima)) {
-      namaPenerima = "Dedi Setiadi";
-    }
+    namaPenerima = namaPenerima.replace(/^(KIRIM\s*UANG|UANG\s*MASUK|TRANSFER|KE|A\.N\.?|AN|DANA|BCA|BRI|MANDIRI|BERHASIL|TUJUAN)\s*/gi, '').trim();
+    if (/^Pedi Setiadi$/i.test(namaPenerima)) namaPenerima = "Dedi Setiadi";
   }
 
-  // MASUKKAN KE FORM INPUT
+  // MASUKKAN KE FORM INPUT HTML
   if (bankTujuan) document.getElementById('trf_bank').value = bankTujuan;
   if (rekTujuan) document.getElementById('trf_rek').value = rekTujuan;
   if (namaPenerima && namaPenerima.length > 1) document.getElementById('trf_penerima').value = namaPenerima.toUpperCase();
