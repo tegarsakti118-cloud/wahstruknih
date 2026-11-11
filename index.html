@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Tambahkan script Tesseract OCR ini di dalam <head> index.html -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; }
     .font-thermal { font-family: 'Space Mono', monospace; }
@@ -43,6 +45,15 @@
           <option value="transfer">Struk Transfer</option>
           <option value="token">Struk Token PLN</option>
         </select>
+      </div>
+
+      <!-- INDIKATOR LOADING SCAN GAMBAR BUKTI -->
+      <div id="loadingOcr" class="bg-blue-600 text-white p-3 rounded-2xl shadow-lg flex items-center justify-between text-xs font-bold hidden animate-pulse">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🔍</span>
+          <span id="ocrStatusText">Membaca bukti transfer dari foto...</span>
+        </div>
+        <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">Mohon tunggu</span>
       </div>
 
       <!-- FORM TRANSFER CARD -->

@@ -22,33 +22,77 @@ window.addEventListener('DOMContentLoaded', async () => {
     muatPengaturanTersimpan();
     inisialisasiPengirim();
 
-    // 1. Tangkap Share Teks langsung dari URL (Metode GET)
     const urlParams = new URLSearchParams(window.location.search);
+
+    // 1. Jika kiriman berupa TEKS langsung
     const sharedText = urlParams.get('text') || urlParams.get('title') || '';
     if (sharedText) {
       parseTeksEwallet(sharedText);
     }
 
-    // 2. Tangkap kiriman dari Service Worker (Metode POST)
+    // 2. Jika kiriman berupa GAMBAR / POST dari e-wallet
     if (urlParams.get('shared') === 'true' && 'caches' in window) {
       const cache = await caches.open('wahstruk-share');
+      
+      // Cek apakah ada kiriman teks
       const cachedText = await cache.match('shared-text');
       if (cachedText) {
         const text = await cachedText.text();
         parseTeksEwallet(text);
         await cache.delete('shared-text');
       }
+
+      // Cek apakah ada kiriman GAMBAR FOTO
+      const cachedImage = await cache.match('shared-image');
+      if (cachedImage) {
+        const imageBlob = await cachedImage.blob();
+        await scanGambarBukti(imageBlob);
+        await cache.delete('shared-image');
+      }
     }
   } catch (err) {
-    console.error("Gagal membaca share:", err);
+    console.error("Gagal inisialisasi:", err);
   } finally {
-    // Pastikan struk SELALU digambar dan tidak boleh kosong!
     renderStruk();
     renderRiwayat();
   }
 });
 
-// ==================== FUNGSI PARSER SAKTI BUKTI E-WALLET ====================
+// ==================== MESIN OCR PEMINDAI GAMBAR BUKTI ====================
+async function scanGambarBukti(imageBlob) {
+  const loading = document.getElementById('loadingOcr');
+  const statusText = document.getElementById('ocrStatusText');
+  if (loading) loading.classList.remove('hidden');
+
+  try {
+    if (typeof Tesseract === 'undefined') {
+      alert("Sedang memuat library pembaca gambar, pastikan ada internet.");
+      return;
+    }
+
+    statusText.innerText = "🔍 Membaca tulisan di foto bukti transfer...";
+    
+    // Scan menggunakan Tesseract OCR
+    const result = await Tesseract.recognize(imageBlob, 'eng', {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          statusText.innerText = `🔍 Membaca foto: ${Math.round(m.progress * 100)}%`;
+        }
+      }
+    });
+
+    const teksHasil = result.data.text;
+    console.log("Teks hasil scan:", teksHasil);
+    parseTeksEwallet(teksHasil);
+  } catch (err) {
+    alert("Gagal membaca gambar secara otomatis: " + err.message);
+  } finally {
+    if (loading) loading.classList.add('hidden');
+    renderStruk();
+  }
+}
+
+// ==================== FUNGSI PARSER TEKS / OCR ====================
 function parseTeksEwallet(text) {
   if (!text) return;
 
@@ -84,15 +128,15 @@ function parseTeksEwallet(text) {
   else if (/GOPAY/i.test(text)) document.getElementById('trf_bank').value = "GOPAY";
   else if (/OVO/i.test(text)) document.getElementById('trf_bank').value = "OVO";
 
-  // 2. Deteksi Nominal Transfer (Cari pola Rp 50.000 atau nominal angka)
-  const nominalMatch = text.match(/Rp\s*([\d\.,]+)/i) || text.match(/Nominal[\s:]*Rp?\s*([\d\.,]+)/i) || text.match(/Jumlah[\s:]*Rp?\s*([\d\.,]+)/i);
+  // 2. Deteksi Nominal Transfer
+  const nominalMatch = text.match(/(?:Nominal|Jumlah|Total|Sebesar|Rp)[\s.:]*Rp?\s*([\d\.,]+)/i) || text.match(/Rp\s*([\d\.,]+)/i);
   if (nominalMatch) {
     const bersih = nominalMatch[1].replace(/[\.,]/g, '');
     document.getElementById('trf_nominal').value = parseInt(bersih);
   }
 
-  // 3. Deteksi No. Rekening Tujuan (Pola 9 sampai 16 digit angka)
-  const rekMatch = text.match(/(?:Ke|Tujuan|Rekening|No\.?\s*Rek)[\s:]*([0-9]{9,18})/i) || text.match(/([0-9]{10,16})/);
+  // 3. Deteksi No. Rekening Tujuan (Pola 9-18 digit angka)
+  const rekMatch = text.match(/(?:Ke|Tujuan|Rekening|No\.?\s*Rek)[\s.:]*([0-9]{9,18})/i) || text.match(/([0-9]{10,16})/);
   if (rekMatch) {
     document.getElementById('trf_rek').value = rekMatch[1];
   }
@@ -100,12 +144,12 @@ function parseTeksEwallet(text) {
   // 4. Deteksi Nama Penerima
   const penerimaMatch = text.match(/(?:Penerima|Ke|Nama)[\s:]*([A-Za-z\s]{3,30})(?:\n|\r|Bank|Rp|$)/i);
   if (penerimaMatch) {
-    const namaBersih = penerimaMatch[1].trim().replace(/(BCA|BRI|MANDIRI|DANA|BERHASIL)/gi, '');
+    const namaBersih = penerimaMatch[1].trim().replace(/(BCA|BRI|MANDIRI|DANA|BERHASIL|TRANSFER)/gi, '').trim();
     if (namaBersih.length > 2) document.getElementById('trf_penerima').value = namaBersih.toUpperCase();
   }
 
   // 5. Deteksi Kode Referensi
-  const refMatch = text.match(/(?:Ref|ID|Transaksi|No\.?\s*Ref)[\s:]*([A-Za-z0-9]{8,25})/i);
+  const refMatch = text.match(/(?:Ref|ID|Transaksi|No\.?\s*Ref)[\s.:]*([A-Za-z0-9]{8,25})/i);
   if (refMatch) {
     document.getElementById('trf_ref').value = refMatch[1];
   }
@@ -307,7 +351,7 @@ function getWaktuSekarang() {
   return { tgl: `${yyyy}-${mm}-${dd}`, jam: `${hh}:${ii}:${ss}`, lengkap: `${yyyy}-${mm}-${dd} ${hh}:${ii}:${ss}` };
 }
 
-// ==================== RENDER STRUK THERMAL (ANTI-KOSONG) ====================
+// ==================== RENDER STRUK THERMAL ====================
 function renderStruk() {
   const strukElement = document.getElementById('strukPreview');
   if (!strukElement) return;
@@ -320,7 +364,6 @@ function renderStruk() {
   const waktu = getWaktuSekarang();
   let html = '';
 
-  // HEADER LOGO + NAMA TOKO
   if (logo) {
     html += `<div class="flex justify-center mb-1"><img src="${logo}" class="max-h-12 object-contain filter grayscale contrast-200"></div>`;
   } else {
@@ -405,7 +448,6 @@ function renderStruk() {
     `;
   }
 
-  // FOOTER SUDAH RAPI & TIDAK ANEH
   html += `
     <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
     <div class="text-center text-[10px]">TERIMA KASIH ATAS</div>

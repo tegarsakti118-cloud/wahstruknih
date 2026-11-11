@@ -1,18 +1,24 @@
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Tangkap kiriman Share dari e-wallet (Metode POST)
   if (event.request.method === 'POST') {
     event.respondWith((async () => {
-      const formData = await event.request.formData();
-      const text = formData.get('text') || formData.get('title') || '';
-      const imageFile = formData.get('image');
+      try {
+        const formData = await event.request.formData();
+        const cache = await caches.open('wahstruk-share');
 
-      const cache = await caches.open('wahstruk-share');
-      if (text) await cache.put('shared-text', new Response(text));
-      if (imageFile) await cache.put('shared-image', new Response(imageFile));
+        for (const [key, value] of formData.entries()) {
+          if (value instanceof File) {
+            await cache.put('shared-image', new Response(value));
+          } else if (typeof value === 'string' && value.trim()) {
+            await cache.put('shared-text', new Response(value));
+          }
+        }
+      } catch (err) {
+        console.error("Gagal tangkap share:", err);
+      }
 
-      // Buka aplikasi kembali ke halaman utama
+      // Alihkan ke aplikasi utama dengan penanda share
       return Response.redirect('./?shared=true', 303);
     })());
   }
