@@ -3,273 +3,497 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Wahstruknih</title>
+  <title>WahStrukNih!</title>
   <link rel="manifest" href="manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; }
     .font-thermal { font-family: 'Space Mono', monospace; }
+    /* Pola background titik-titik persis TRFBT */
+    .bg-dotted {
+      background-image: radial-gradient(#cbd5e1 1.2px, transparent 1.2px);
+      background-size: 16px 16px;
+    }
+    /* Gerigi kertas struk thermal */
+    .receipt-tear {
+      background: linear-gradient(135deg, transparent 5px, #ffffff 5px), linear-gradient(-135deg, transparent 5px, #ffffff 5px);
+      background-size: 12px 12px;
+    }
   </style>
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col items-center select-none pb-24">
+<body class="bg-[#F8FAFC] text-slate-800 min-h-screen flex flex-col items-center select-none pb-24">
 
+  <!-- WRAPPER UTAMA -->
   <div class="w-full max-w-sm px-3.5 pt-3">
 
-    <!-- ==================== TAB 1: CETAK STRUK ==================== -->
-    <div id="tab-cetak" class="space-y-3">
+    <!-- ==========================================
+         VIEW 1: BERANDA (HOME SEPERTI TRFBT)
+         ========================================== -->
+    <div id="view-beranda" class="space-y-3.5">
       
-      <!-- TOP BAR -->
-      <div class="bg-white/90 backdrop-blur-md px-4 py-3 rounded-2xl shadow-sm border border-slate-200/80 flex justify-between items-center">
+      <!-- HEADER APLIKASI (OPSI 1: LOGO UTUH & ELEGAN) -->
+      <div class="flex justify-between items-center py-1 px-1">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-blue-500/20">
-            ⚡
-          </div>
+          <!-- Logo tampil utuh tanpa terpotong -->
+          <img src="icon.png" alt="WahStrukNih" class="w-12 h-12 object-contain rounded-2xl shadow-sm">
           <div>
-            <h1 class="text-sm font-extrabold tracking-tight text-slate-900 leading-tight">Wahstruknih</h1>
-            <p class="text-[10px] text-slate-400 font-medium">Auto-Scan & Cetak Struk</p>
+            <h1 class="text-xs font-black uppercase tracking-wider text-slate-400 leading-none">Aplikasi Kasir</h1>
+            <p class="text-sm font-extrabold text-slate-800 tracking-tight mt-0.5">Cetak Struk Kilat</p>
           </div>
         </div>
-        
-        <select id="tipeStruk" onchange="gantiTipeStruk()" class="border border-slate-300 text-xs font-bold rounded-xl px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:outline-none">
-          <option value="transfer">Struk Transfer</option>
-          <option value="token">Struk Token PLN</option>
-        </select>
-      </div>
 
-      <!-- NOTIFIKASI PROSES SENYAP (SEPERTI TRFBT) -->
-      <div id="loadingOcr" class="bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between text-xs font-semibold hidden transition-all">
+        <!-- Status Badge -->
+        <div id="badgeStatus" class="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200/80 text-emerald-700 font-bold text-[11px] px-3 py-1 rounded-full shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Online</span>
+        </div>
+      </div>
+      
+      <!-- KARTU STATUS KUOTA / LISENSI -->
+      <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
         <div class="flex items-center gap-2.5">
-          <svg class="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-          </svg>
-          <span id="ocrStatusText">Membaca bukti transfer...</span>
+          <span class="text-amber-500 text-lg">☀️</span>
+          <div>
+            <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Status Lisensi:</div>
+            <div class="text-sm font-black text-amber-600">UNLIMITED AKTIF</div>
+          </div>
         </div>
-        <span class="text-[10px] text-slate-400">Otomatis</span>
+        <button onclick="pindahTab('printer')" class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-sm shadow-blue-500/20 transition-all">
+          Koneksi Printer
+        </button>
       </div>
 
-      <!-- FORM TRANSFER (TAMPILAN BERSIH) -->
-      <div id="formTransfer" class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 space-y-3 text-xs">
-        <div>
-          <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Kirim Dari Rekening:</label>
-          <select id="selectPengirimAktif" class="w-full border border-slate-200 p-2 rounded-xl font-bold bg-slate-50/80 text-slate-800 focus:outline-none" onchange="renderStruk()">
-            <!-- Diisi otomatis dari daftar pengirim -->
-          </select>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2.5">
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Bank Tujuan:</label>
-            <input id="trf_bank" type="text" placeholder="Contoh: BRI" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-semibold bg-white uppercase focus:outline-none" oninput="renderStruk()">
+      <!-- HERO ACTION: CETAK BUKTI TRANSFER (GRADIENT BIRU-UNGU) -->
+      <label for="inputUploadTransfer" class="block cursor-pointer">
+        <div class="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white p-5 rounded-3xl shadow-xl shadow-blue-600/20 flex items-center justify-between active:scale-[0.98] transition-all relative overflow-hidden group">
+          <div class="space-y-1 relative z-10">
+            <h2 class="text-lg font-black tracking-tight">Cetak Bukti Transfer</h2>
+            <p class="text-[11px] text-blue-100 font-medium max-w-[190px] leading-relaxed">
+              Pilih bukti transfer dari galeri, ubah otomatis menjadi struk.
+            </p>
           </div>
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">No. Rekening:</label>
-            <input id="trf_rek" type="text" placeholder="Nomor Rekening" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs font-semibold bg-white focus:outline-none" oninput="renderStruk()">
+          <div class="w-14 h-14 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-2xl shadow-inner relative z-10 group-hover:scale-105 transition-transform">
+            🖼️
           </div>
         </div>
+        <input type="file" id="inputUploadTransfer" accept="image/*" class="hidden" onchange="bacaGambarManual(event, 'transfer')">
+      </label>
 
-        <div>
-          <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Nama Penerima:</label>
-          <input id="trf_penerima" type="text" placeholder="Nama Penerima Transfer" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-bold bg-white text-slate-900 uppercase focus:outline-none" oninput="renderStruk()">
-        </div>
-
-        <div class="grid grid-cols-2 gap-2.5">
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Nominal (Rp):</label>
-            <input id="trf_nominal" type="number" placeholder="0" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-extrabold text-sm text-slate-900 bg-white focus:outline-none" oninput="renderStruk()">
-          </div>
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Kode Ref:</label>
-            <input id="trf_ref" type="text" placeholder="No. Referensi" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs text-slate-600 bg-white focus:outline-none" oninput="renderStruk()">
-          </div>
-        </div>
-
-        <!-- BIAYA ADMIN CEPAT -->
-        <div class="bg-gradient-to-br from-blue-50 to-indigo-50/60 p-3 rounded-xl border border-blue-100 mt-1">
-          <label class="font-bold text-[10px] uppercase tracking-wider text-blue-900 block mb-1.5">Biaya Admin Konter:</label>
-          <div class="flex items-center gap-1.5">
-            <input id="trf_admin" type="number" value="3000" class="border border-blue-200 p-2 rounded-xl w-1/3 font-black text-blue-700 text-sm bg-white shadow-sm focus:outline-none" oninput="renderStruk()">
-            <div class="flex gap-1 flex-1">
-              <button type="button" onclick="setAdminCepat(2500)" class="bg-white border border-blue-200/80 active:scale-95 text-[11px] font-bold py-1.5 px-2 rounded-lg shadow-sm text-slate-700 flex-1">2.5k</button>
-              <button type="button" onclick="setAdminCepat(3000)" class="bg-white border border-blue-200/80 active:scale-95 text-[11px] font-bold py-1.5 px-2 rounded-lg shadow-sm text-slate-700 flex-1">3k</button>
-              <button type="button" onclick="setAdminCepat(5000)" class="bg-white border border-blue-200/80 active:scale-95 text-[11px] font-bold py-1.5 px-2 rounded-lg shadow-sm text-slate-700 flex-1">5k</button>
-              <button type="button" onclick="setAdminCepat(10000)" class="bg-white border border-blue-200/80 active:scale-95 text-[11px] font-bold py-1.5 px-2 rounded-lg shadow-sm text-slate-700 flex-1">10k</button>
+      <!-- 2 GRID CARD: TOKEN LISTRIK & CETAK TAGIHAN -->
+      <div class="grid grid-cols-2 gap-3">
+        <!-- Card Token Listrik -->
+        <label for="inputUploadToken" class="cursor-pointer block">
+          <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm active:scale-95 transition-all space-y-2 h-full flex flex-col justify-between">
+            <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center text-lg font-bold">
+              ⚡
+            </div>
+            <div>
+              <h3 class="font-extrabold text-slate-900 text-xs">Token Listrik</h3>
+              <p class="text-[10px] text-slate-400 font-medium">Upload bukti PLN</p>
             </div>
           </div>
-        </div>
-      </div>
+          <input type="file" id="inputUploadToken" accept="image/*" class="hidden" onchange="bacaGambarManual(event, 'token')">
+        </label>
 
-      <!-- FORM TOKEN PLN -->
-      <div id="formToken" class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 space-y-3 text-xs hidden">
-        <div>
-          <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">20 Angka Token Listrik:</label>
-          <input id="pln_token" type="text" placeholder="0000 0000 0000 0000 0000" class="w-full border border-amber-300 px-3 py-2.5 rounded-xl font-bold font-mono text-center tracking-wider text-base bg-amber-50/50 text-amber-950 focus:outline-none" oninput="renderStruk()">
-        </div>
-        <div class="grid grid-cols-2 gap-2.5">
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Nama Pelanggan:</label>
-            <input id="pln_nama" type="text" placeholder="Nama Pelanggan" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-semibold bg-white" oninput="renderStruk()">
+        <!-- Card Cetak Tagihan -->
+        <button onclick="bukaFormManualKosong('transfer')" class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm active:scale-95 transition-all text-left space-y-2 h-full flex flex-col justify-between">
+          <div class="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg font-bold">
+            📄
           </div>
           <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">No. Meter / ID Pel:</label>
-            <input id="pln_meter" type="text" placeholder="Nomor Meter" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs font-semibold bg-white" oninput="renderStruk()">
+            <h3 class="font-extrabold text-slate-900 text-xs">Ketik Manual</h3>
+            <p class="text-[10px] text-slate-400 font-medium">Buat struk tanpa foto</p>
           </div>
-        </div>
-        <div class="grid grid-cols-2 gap-2.5">
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">KWH:</label>
-            <input id="pln_kwh" type="text" placeholder="Contoh: 30.10KWH" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-semibold bg-white" oninput="renderStruk()">
-          </div>
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Total Bayar (Rp):</label>
-            <input id="pln_total" type="number" placeholder="0" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-bold text-sm bg-white" oninput="renderStruk()">
-          </div>
-        </div>
+        </button>
       </div>
 
-      <!-- PRATINJAU STRUK -->
-      <div class="flex items-center justify-between px-1">
-        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pratinjau Kertas 58mm</span>
-        <span class="text-[10px] bg-slate-200 text-slate-600 font-mono px-2 py-0.5 rounded-full">32 Col</span>
-      </div>
-
-      <div class="bg-white border border-slate-300 p-4 font-thermal text-[11px] leading-tight text-black shadow-lg rounded-xl relative overflow-hidden" id="strukPreview">
-        <!-- Render otomatis struk di sini -->
-      </div>
-
-      <!-- BLUETOOTH & PRINT ACTION CARD -->
-      <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200/80 space-y-2.5">
-        <div class="flex items-center justify-between text-xs bg-slate-50 px-3 py-2 rounded-xl border border-slate-200/70">
-          <div class="flex items-center gap-2">
-            <span id="dotPrinter" class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-            <span id="statusPrinter" class="text-slate-600 font-bold text-[11px]">Belum Konek Printer</span>
-          </div>
-          <button onclick="hubungkanPrinter()" class="bg-blue-600 active:scale-95 text-white font-bold px-3 py-1.5 rounded-lg text-[11px]">
-            🔗 Sambung
+      <!-- SECTION RIWAYAT CETAK (RECENT 3) -->
+      <div class="pt-1 space-y-2.5">
+        <div class="flex justify-between items-center px-1">
+          <h3 class="font-black text-slate-900 text-sm">Riwayat Cetak</h3>
+          <button onclick="pindahTab('aktivitas')" class="text-blue-600 font-bold text-xs hover:underline">
+            Lihat Semua
           </button>
         </div>
+        <div id="listRiwayatBeranda" class="space-y-2">
+          <!-- Item riwayat teratas via JS -->
+        </div>
+      </div>
+    </div>
 
-        <button onclick="cetakLangsung()" class="w-full bg-slate-900 active:scale-[0.98] text-white font-black py-3.5 rounded-xl shadow-lg flex justify-center items-center gap-2 text-sm tracking-wider">
-          <span>🖨️</span>
-          <span>CETAK STRUK SEKARANG</span>
+    <!-- ==========================================
+         VIEW 2: PREVIEW STRUK (PERSIS TAMPILAN TRFBT)
+         ========================================== -->
+    <div id="view-preview" class="space-y-3.5 hidden">
+      
+      <!-- TOP ACTION PREVIEW -->
+      <div class="flex items-center justify-between">
+        <button onclick="kembaliKeBeranda()" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 font-black text-sm active:scale-95">
+          ❮
+        </button>
+        <h2 class="font-extrabold text-slate-900 text-sm">Preview Struk</h2>
+        <div class="w-9"></div>
+      </div>
+
+      <!-- TEMA STRUK CHIPS -->
+      <div class="flex gap-2 overflow-x-auto pb-1 text-xs font-bold">
+        <button onclick="gantiTemaStruk('standard')" id="btnTemaStandard" class="bg-blue-600 text-white px-3.5 py-1.5 rounded-full shadow-sm">
+          1. Standard
+        </button>
+        <button onclick="gantiTemaStruk('minimalis')" id="btnTemaMinimalis" class="bg-white border text-slate-600 px-3.5 py-1.5 rounded-full shadow-sm">
+          2. Minimalis
+        </button>
+        <button onclick="gantiTemaStruk('modern')" id="btnTemaModern" class="bg-white border text-slate-600 px-3.5 py-1.5 rounded-full shadow-sm">
+          3. Modern
+        </button>
+      </div>
+
+      <!-- KANVAS KERTAS THERMAL DENGAN BACKGROUND TITIK-TITIK -->
+      <div class="bg-dotted bg-slate-200/60 p-4 rounded-3xl border border-slate-200 flex justify-center shadow-inner">
+        
+        <!-- FISIK KERTAS STRUK THERMAL (REALISTIS) -->
+        <div class="w-full bg-white shadow-2xl rounded-t-sm rounded-b-md p-4 font-thermal text-[11px] leading-tight text-black relative select-none">
+          <!-- Efek Sobekan Kertas Atas -->
+          <div class="h-2 w-full receipt-tear absolute -top-2 left-0 right-0"></div>
+          
+          <!-- KONTEN STRUK HASIL PARSING -->
+          <div id="strukPrintArea">
+            <!-- Render via renderStruk() -->
+          </div>
+          
+          <!-- Efek Sobekan Kertas Bawah -->
+          <div class="h-2 w-full receipt-tear absolute -bottom-2 left-0 right-0 rotate-180"></div>
+        </div>
+      </div>
+
+      <!-- FLOATING ACTION BUTTONS (PERSIS TRFBT) -->
+      <div class="flex items-center gap-2 pt-1">
+        <!-- Tombol Edit Pensil (Buka Modal Edit Data Lengkap) -->
+        <button onclick="bukaModalEditLengkap()" class="w-12 h-12 bg-white border border-slate-200 rounded-2xl shadow-md flex items-center justify-center text-slate-800 text-lg active:scale-95 transition-all">
+          ✏️
+        </button>
+
+        <!-- Tombol Bagikan Gambar/Teks -->
+        <button onclick="bagikanStruk()" class="flex-1 h-12 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all">
+          <span>BAGIKAN</span>
+        </button>
+
+        <!-- Tombol Cetak / Hubungkan -->
+        <button onclick="cetakLangsung()" id="btnCetakAksi" class="flex-1 h-12 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all">
+          <span>HUBUNGKAN</span>
         </button>
       </div>
     </div>
 
-    <!-- ==================== TAB 2: RIWAYAT TRANSAKSI ==================== -->
-    <div id="tab-riwayat" class="space-y-3.5 hidden">
-      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex justify-between items-center">
-        <div>
-          <h2 class="font-extrabold text-slate-900 text-sm">Riwayat Transaksi</h2>
-          <p class="text-[10px] text-slate-400 font-medium">Tersimpan otomatis setelah dicetak</p>
+    <!-- ==========================================
+         VIEW 3: PRINTER (KONEKSI PRINTER SEPERTI TRFBT)
+         ========================================== -->
+    <div id="view-printer" class="space-y-4 hidden">
+      <div class="flex items-center gap-3">
+        <button onclick="kembaliKeBeranda()" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 font-black text-sm active:scale-95">
+          ❮
+        </button>
+        <h2 class="font-extrabold text-slate-900 text-base">Koneksi Printer</h2>
+      </div>
+
+      <!-- KARTU STATUS SAAT INI -->
+      <div class="space-y-1.5">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">Status Saat Ini</div>
+        <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex items-center gap-3.5">
+          <div class="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-2xl">
+            🖨️
+          </div>
+          <div>
+            <div id="namaPrinterKonek" class="font-extrabold text-slate-900 text-sm">Printer Thermal</div>
+            <div id="indikatorPrinterStatus" class="flex items-center gap-1.5 text-rose-500 text-xs font-bold mt-0.5">
+              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>Terputus</span>
+            </div>
+          </div>
         </div>
-        <button onclick="hapusSemuaRiwayat()" class="text-rose-500 hover:text-rose-700 text-[11px] font-bold bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-lg">
-          Bersihkan
+      </div>
+
+      <!-- TOMBOL CARI ULANG BLUETOOTH -->
+      <div class="flex justify-between items-center px-1 pt-2">
+        <span class="text-xs font-bold text-slate-500">Perangkat Tersedia</span>
+        <button onclick="hubungkanPrinter()" class="text-blue-600 font-bold text-xs flex items-center gap-1 hover:underline">
+          🔄 Cari Ulang
         </button>
       </div>
 
-      <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 p-4 rounded-2xl text-white shadow-xl flex justify-between items-center">
-        <div>
-          <div class="text-[10px] text-slate-300">Total Transaksi</div>
-          <div id="summaryJumlahTrx" class="text-lg font-black tracking-tight">0 Transaksi</div>
-        </div>
-        <div class="text-right">
-          <div class="text-[10px] text-slate-300">Perputaran Uang</div>
-          <div id="summaryTotalNominal" class="text-lg font-black tracking-tight text-emerald-400">Rp 0</div>
-        </div>
+      <div class="bg-white p-6 rounded-3xl border border-slate-200/80 text-center space-y-2">
+        <div class="text-3xl">📡</div>
+        <p class="text-xs text-slate-500 font-medium max-w-xs mx-auto">
+          Nyalakan Bluetooth & Printer Thermal 58mm lu, lalu klik tombol cari ulang di atas untuk menyambungkan.
+        </p>
       </div>
-
-      <div id="containerListRiwayat" class="space-y-2.5"></div>
     </div>
 
-    <!-- ==================== TAB 3: SETELAN TOKO ==================== -->
-    <div id="tab-setelan" class="space-y-3.5 hidden">
-      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80">
-        <h2 class="font-extrabold text-slate-900 text-sm mb-3 flex items-center gap-2">
-          <span>🏪 Identitas Konter & Logo</span>
-        </h2>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Logo Toko (Dari Galeri):</label>
-            <input type="file" id="inputLogo" accept="image/*" class="w-full text-[11px] border border-slate-200 p-1.5 rounded-xl bg-slate-50" onchange="prosesUploadLogo(event)">
-            <button onclick="hapusLogo()" class="text-[10px] text-rose-600 font-bold mt-1.5 block hover:underline">Hapus Logo</button>
-          </div>
-          <div>
-            <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Nama Toko / Brand:</label>
-            <input id="namaToko" type="text" value="WAHSTRUKNIH" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-bold" oninput="simpanPengaturan()">
-          </div>
-          <div class="grid grid-cols-2 gap-2.5">
-            <div>
-              <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Kode TID:</label>
-              <input id="tidCode" type="text" value="AD4ECF" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs" oninput="simpanPengaturan()">
-            </div>
-            <div>
-              <label class="font-bold text-[10px] uppercase tracking-wider text-slate-400 block mb-1">No. CS / Bantuan:</label>
-              <input id="csNumber" type="text" value="0857-8024-3664" class="w-full border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs" oninput="simpanPengaturan()">
-            </div>
-          </div>
-        </div>
+    <!-- ==========================================
+         VIEW 4: SETELAN (PERSIS MENU SETELAN TRFBT)
+         ========================================== -->
+    <div id="view-setelan" class="space-y-3.5 hidden pb-6">
+      <div class="flex items-center gap-3">
+        <button onclick="kembaliKeBeranda()" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 font-black text-sm active:scale-95">
+          ❮
+        </button>
+        <h2 class="font-extrabold text-slate-900 text-base">Setelan</h2>
       </div>
 
-      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 text-xs">
-        <div class="flex items-center gap-2 mb-3">
-          <span class="p-1 bg-blue-100 text-blue-600 rounded">👥</span>
-          <span class="font-extrabold text-slate-900 text-sm">Daftar Rekening Pengirim</span>
+      <!-- ACCORDION 1: PENGATURAN STRUK & LOGO -->
+      <details class="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden" open>
+        <summary class="p-4 font-extrabold text-slate-800 text-xs flex justify-between items-center cursor-pointer list-none">
+          <div class="flex items-center gap-2.5">
+            <span class="w-7 h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-sm font-bold">📄</span>
+            <span>Pengaturan Struk & Logo</span>
+          </div>
+          <span class="text-slate-400 text-xs">▼</span>
+        </summary>
+
+        <div class="p-4 pt-1 border-t border-slate-100 space-y-3 text-xs">
+          <!-- Preview Box Logo -->
+          <div class="border-2 border-dashed border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center bg-slate-50">
+            <div id="previewLogoBox" class="flex justify-center mb-2">
+              <span class="text-3xl">⚡</span>
+            </div>
+            
+            <div class="flex gap-2 mt-2">
+              <label for="inputLogoSetelan" class="bg-blue-50 text-blue-600 font-bold px-3 py-1.5 rounded-xl cursor-pointer text-[11px] active:scale-95">
+                Ganti Logo
+              </label>
+              <input type="file" id="inputLogoSetelan" accept="image/*" class="hidden" onchange="prosesUploadLogo(event)">
+              <button onclick="hapusLogo()" class="bg-rose-50 text-rose-600 font-bold px-3 py-1.5 rounded-xl text-[11px] active:scale-95">
+                Hapus
+              </button>
+            </div>
+          </div>
+
+          <!-- Input Nama Usaha / Toko -->
+          <div>
+            <label class="font-bold text-[10px] text-slate-400 uppercase tracking-wider block mb-1">Nama Usaha / Toko</label>
+            <input id="namaToko" type="text" value="SakaPay" class="w-full border border-slate-200 px-3.5 py-2.5 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20" oninput="simpanPengaturan()">
+          </div>
+
+          <!-- Input Alamat / Kontak -->
+          <div>
+            <label class="font-bold text-[10px] text-slate-400 uppercase tracking-wider block mb-1">Alamat / Kontak</label>
+            <input id="alamatToko" type="text" value="Jl. Mawar No. 12..." class="w-full border border-slate-200 px-3.5 py-2.5 rounded-xl font-semibold text-slate-800 focus:outline-none" oninput="simpanPengaturan()">
+          </div>
+
+          <!-- Pesan Footer -->
+          <div>
+            <label class="font-bold text-[10px] text-slate-400 uppercase tracking-wider block mb-1">Pesan Footer</label>
+            <input id="pesanFooter" type="text" value="Terima Kasih Atas Kepercayaan Anda" class="w-full border border-slate-200 px-3.5 py-2.5 rounded-xl font-semibold text-slate-800 focus:outline-none" oninput="simpanPengaturan()">
+          </div>
+
+          <!-- Toggle Biaya Admin & Aturan Bertingkat -->
+          <div class="pt-2 border-t border-slate-100 flex justify-between items-center">
+            <span class="font-bold text-slate-700 text-xs">Tampilkan Biaya Admin</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggleTampilAdmin" class="sr-only peer" checked onchange="simpanPengaturan()">
+              <div class="w-9 h-5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+            </label>
+          </div>
+
+          <!-- Biaya Admin Input Default -->
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <div>
+              <label class="font-bold text-[10px] text-slate-400 uppercase tracking-wider block mb-1">Biaya Admin (Rp)</label>
+              <input id="adminFee" type="number" value="3000" class="w-full border border-slate-200 p-2 rounded-xl font-bold" oninput="simpanPengaturan()">
+            </div>
+            <div>
+              <label class="font-bold text-[10px] text-slate-400 uppercase tracking-wider block mb-1">No. CS / Bantuan</label>
+              <input id="csNumber" type="text" value="0857-8024-3664" class="w-full border border-slate-200 p-2 rounded-xl font-mono" oninput="simpanPengaturan()">
+            </div>
+          </div>
         </div>
+      </details>
 
-        <div class="flex justify-between items-center mb-2.5 pt-2 border-t border-slate-100">
-          <span class="font-bold text-slate-700 text-xs">Aktifkan Fitur Pengirim</span>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" id="togglePengirim" class="sr-only peer" checked onchange="toggleFiturPengirim()">
-            <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-          </label>
+      <!-- ACCORDION 2: DAFTAR PENGIRIM (PERSIS SCREENSHOT TRFBT) -->
+      <details class="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden" open>
+        <summary class="p-4 font-extrabold text-slate-800 text-xs flex justify-between items-center cursor-pointer list-none">
+          <div class="flex items-center gap-2.5">
+            <span class="w-7 h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-sm font-bold">👥</span>
+            <span>Daftar Pengirim</span>
+          </div>
+          <span class="text-slate-400 text-xs">▼</span>
+        </summary>
+
+        <div class="p-4 pt-1 border-t border-slate-100 space-y-3 text-xs">
+          <!-- Toggle Pengirim -->
+          <div class="flex justify-between items-center">
+            <span class="font-bold text-slate-700 text-xs">Aktifkan Fitur Pengirim</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="togglePengirim" class="sr-only peer" checked onchange="toggleFiturPengirim()">
+              <div class="w-9 h-5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+            </label>
+          </div>
+
+          <p class="text-[10px] text-slate-400 font-medium">Pilih salah satu sebagai Default.</p>
+          <div id="listPengirim" class="space-y-2"></div>
+
+          <button onclick="bukaModalPengirim()" class="w-full py-2.5 border-2 border-dashed border-blue-400 text-blue-600 font-bold rounded-2xl text-center text-xs hover:bg-blue-50/50 flex items-center justify-center gap-1.5">
+            + Tambah Data Pengirim
+          </button>
         </div>
+      </details>
 
-        <div id="listPengirim" class="space-y-2 mb-3"></div>
+      <!-- TOMBOL SIMPAN PENGATURAN BESAR DI BAWAH -->
+      <button onclick="simpanPengaturanSukses()" class="w-full py-3.5 bg-blue-600 active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-blue-500/20">
+        Simpan Pengaturan
+      </button>
+    </div>
 
-        <button onclick="bukaModalPengirim()" class="w-full py-2.5 border-2 border-dashed border-blue-400/80 text-blue-600 font-bold rounded-xl text-center text-xs hover:bg-blue-50/50 flex items-center justify-center gap-1.5">
-          <span>+</span> Tambah Data Pengirim Baru
+    <!-- ==========================================
+         VIEW 5: AKTIVITAS LENGKAP (RIWAYAT SEMUA)
+         ========================================== -->
+    <div id="view-aktivitas" class="space-y-3.5 hidden">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <button onclick="kembaliKeBeranda()" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 font-black text-sm active:scale-95">
+            ❮
+          </button>
+          <h2 class="font-extrabold text-slate-900 text-base">Aktivitas</h2>
+        </div>
+        <button onclick="hapusSemuaRiwayat()" class="bg-rose-50 text-rose-600 font-bold text-xs px-3 py-1.5 rounded-xl border border-rose-100 flex items-center gap-1 active:scale-95">
+          🗑️ Semua
         </button>
       </div>
+
+      <!-- Search Input -->
+      <div class="bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-2">
+        <span class="text-slate-400 text-sm">🔍</span>
+        <input id="searchRiwayatInput" type="text" placeholder="Cari nama atau nominal..." class="w-full text-xs font-semibold text-slate-800 focus:outline-none" oninput="filterRiwayat()">
+      </div>
+
+      <!-- Container List Aktivitas Lengkap -->
+      <div id="containerAktivitasLengkap" class="space-y-2.5"></div>
     </div>
 
   </div>
 
-  <!-- FLOATING BOTTOM BAR -->
-  <div class="fixed bottom-3 left-0 right-0 max-w-xs mx-auto bg-white/95 backdrop-blur-md border border-slate-200/80 py-1.5 px-3 flex justify-around items-center z-40 rounded-2xl shadow-xl shadow-slate-900/10">
-    <button onclick="pindahTab('cetak')" id="nav-cetak" class="flex flex-col items-center gap-0.5 text-blue-600 font-bold px-4 py-1 rounded-xl">
-      <span class="text-base">🧾</span>
-      <span class="text-[10px]">Cetak</span>
-    </button>
-    <button onclick="pindahTab('riwayat')" id="nav-riwayat" class="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 px-4 py-1 rounded-xl">
-      <span class="text-base">📋</span>
-      <span class="text-[10px]">Riwayat</span>
-    </button>
-    <button onclick="pindahTab('setelan')" id="nav-setelan" class="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 px-4 py-1 rounded-xl">
-      <span class="text-base">⚙️</span>
-      <span class="text-[10px]">Setelan</span>
-    </button>
+  <!-- ==========================================
+       MODAL 1: EDIT DATA LENGKAP (PERSIS GAMBAR 1)
+       ========================================== -->
+  <div id="modalEditLengkap" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end justify-center z-50 hidden">
+    <div class="bg-white rounded-t-3xl max-w-sm w-full p-5 space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl animate-in slide-in-from-bottom duration-200">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-black text-base text-slate-900">Edit Data Lengkap</h3>
+        <button onclick="tutupModalEditLengkap()" class="text-blue-600 font-bold text-xs hover:underline">Batal</button>
+      </div>
+
+      <!-- INFO TOKO & WAKTU -->
+      <div class="space-y-2.5">
+        <div class="text-[11px] font-black uppercase text-blue-600 border-b border-blue-100 pb-1">Info Toko & Waktu</div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nama Toko</label>
+          <input id="edit_namaToko" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-bold text-xs text-slate-800">
+        </div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Waktu Transaksi</label>
+          <input id="edit_waktu" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-mono text-xs text-slate-800">
+        </div>
+      </div>
+
+      <!-- PENGIRIM (OPSIONAL) -->
+      <div class="space-y-2.5">
+        <div class="text-[11px] font-black uppercase text-blue-600 border-b border-blue-100 pb-1">Pengirim (Opsional)</div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Pilih Pengirim</label>
+          <select id="edit_selectPengirim" class="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-2xl font-bold text-xs text-slate-800">
+            <!-- Diisi otomatis -->
+          </select>
+        </div>
+      </div>
+
+      <!-- PENERIMA / TUJUAN -->
+      <div class="space-y-2.5">
+        <div class="text-[11px] font-black uppercase text-blue-600 border-b border-blue-100 pb-1">Penerima / Tujuan</div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nama Penerima</label>
+          <input id="edit_penerima" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-bold text-xs text-slate-900 uppercase">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Bank Tujuan</label>
+            <input id="edit_bank" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-bold text-xs uppercase">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">No. Rekening</label>
+            <input id="edit_rek" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-mono text-xs font-bold">
+          </div>
+        </div>
+      </div>
+
+      <!-- DETAIL TRANSAKSI -->
+      <div class="space-y-2.5">
+        <div class="text-[11px] font-black uppercase text-blue-600 border-b border-blue-100 pb-1">Detail Transaksi</div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nomor Referensi</label>
+          <input id="edit_ref" type="text" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-mono text-xs font-semibold text-slate-800">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nominal (Rp)</label>
+            <input id="edit_nominal" type="number" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-extrabold text-xs text-slate-900">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Biaya Admin (Rp)</label>
+            <input id="edit_admin" type="number" class="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-2xl font-extrabold text-xs text-blue-600">
+          </div>
+        </div>
+      </div>
+
+      <button onclick="simpanEditLengkap()" class="w-full py-3.5 bg-blue-600 active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-blue-500/20">
+        Simpan & Terapkan
+      </button>
+    </div>
   </div>
 
-  <!-- MODAL TAMBAH PENGIRIM -->
+  <!-- ==========================================
+       MODAL 2: TAMBAH DATA PENGIRIM
+       ========================================== -->
   <div id="modalPengirim" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-3xl max-w-xs w-full p-5 space-y-3.5 shadow-2xl">
       <div class="flex justify-between items-center">
         <h3 class="font-extrabold text-sm text-slate-900">Tambah Data Pengirim</h3>
         <button onclick="tutupModalPengirim()" class="text-slate-400 text-lg leading-none">&times;</button>
       </div>
-      <input id="new_nama" type="text" placeholder="Nama Pemilik (TEGXX DISXX)" class="w-full border border-slate-200 px-3 py-2 rounded-xl text-xs font-semibold focus:outline-none">
-      <input id="new_bank" type="text" placeholder="Nama Bank (BRI / SEABANK / DANA)" class="w-full border border-slate-200 px-3 py-2 rounded-xl text-xs font-semibold uppercase focus:outline-none">
-      <input id="new_rek" type="text" placeholder="No Rekening (5655 XXXX XXXX 539)" class="w-full border border-slate-200 px-3 py-2 rounded-xl text-xs font-mono font-semibold focus:outline-none">
+      <input id="new_nama" type="text" placeholder="Nama Pemilik (TEGAR DISTA S)" class="w-full border border-slate-200 px-3 py-2.5 rounded-xl text-xs font-semibold focus:outline-none">
+      <input id="new_bank" type="text" placeholder="Nama Bank (BRI / SEABANK)" class="w-full border border-slate-200 px-3 py-2.5 rounded-xl text-xs font-semibold uppercase focus:outline-none">
+      <input id="new_rek" type="text" placeholder="No Rekening (5655 XXXX XXXX 539)" class="w-full border border-slate-200 px-3 py-2.5 rounded-xl text-xs font-mono font-semibold focus:outline-none">
       <div class="flex gap-2 pt-1">
         <button onclick="tutupModalPengirim()" class="w-1/2 py-2.5 border border-slate-200 rounded-xl text-xs font-bold text-slate-600">Batal</button>
         <button onclick="simpanPengirimBaru()" class="w-1/2 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20">Simpan</button>
       </div>
     </div>
+  </div>
+
+  <!-- ==========================================
+       BOTTOM NAVIGATION BAR (PERSIS TRFBT)
+       ========================================== -->
+  <div class="fixed bottom-0 left-0 right-0 max-w-sm mx-auto bg-white border-t border-slate-200/80 py-2 px-6 flex justify-around items-center z-40 shadow-lg">
+    <!-- Tab Beranda -->
+    <button onclick="pindahTab('beranda')" id="nav-beranda" class="flex flex-col items-center gap-1 text-blue-600 font-bold transition-all">
+      <span class="text-lg">🏠</span>
+      <span class="text-[10px]">Beranda</span>
+    </button>
+    <!-- Tab Printer -->
+    <button onclick="pindahTab('printer')" id="nav-printer" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-600 transition-all">
+      <span class="text-lg">🖨️</span>
+      <span class="text-[10px]">Printer</span>
+    </button>
+    <!-- Tab Setelan -->
+    <button onclick="pindahTab('setelan')" id="nav-setelan" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-600 transition-all">
+      <span class="text-lg">⚙️</span>
+      <span class="text-[10px]">Setelan</span>
+    </button>
   </div>
 
   <script src="app.js"></script>
