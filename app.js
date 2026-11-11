@@ -27,24 +27,24 @@ window.addEventListener('DOMContentLoaded', async () => {
     // 1. Tangkap Share Teks Langsung
     const sharedText = urlParams.get('text') || urlParams.get('title') || '';
     if (sharedText) {
-      eksekusiParserLengkap(sharedText);
+      eksekusiParserTRFBT(sharedText);
     }
 
-    // 2. Tangkap Share Gambar / POST dari e-wallet
+    // 2. Tangkap Share Gambar dari e-wallet
     if (urlParams.get('shared') === 'true' && 'caches' in window) {
       const cache = await caches.open('wahstruk-share');
       
       const cachedText = await cache.match('shared-text');
       if (cachedText) {
         const text = await cachedText.text();
-        eksekusiParserLengkap(text);
+        eksekusiParserTRFBT(text);
         await cache.delete('shared-text');
       }
 
       const cachedImage = await cache.match('shared-image');
       if (cachedImage) {
         const imageBlob = await cachedImage.blob();
-        await scanGambarDenganFilter(imageBlob);
+        await scanGambarSenyap(imageBlob);
         await cache.delete('shared-image');
       }
     }
@@ -56,121 +56,47 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ==================== PRE-PROCESSING GAMBAR (BINAIRZATION & KONTRAS TINGGI) ====================
-async function filterGambarHitamPutih(blob) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-
-      // Ubah gambar jadi abu-abu + kontras super tajam agar teks terbaca 100%
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i+1], b = d[i+2];
-        const v = (0.2126*r + 0.7152*g + 0.0722*b >= 165) ? 255 : 0;
-        d[i] = d[i+1] = d[i+2] = v;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      canvas.toBlob(resolve, 'image/png');
-    };
-    img.src = URL.createObjectURL(blob);
-  });
-}
-
-// ==================== MESIN OCR SCAN DENGAN FILTER ====================
-async function scanGambarDenganFilter(imageBlob) {
+// ==================== PROSES SCAN OCR SENYAP (SEPERTI TRFBT) ====================
+async function scanGambarSenyap(imageBlob) {
   const loading = document.getElementById('loadingOcr');
   const statusText = document.getElementById('ocrStatusText');
   if (loading) loading.classList.remove('hidden');
 
   try {
-    statusText.innerText = "⚡ Mempertajam kontras gambar...";
-    const gambarTajam = await filterGambarHitamPutih(imageBlob);
+    statusText.innerText = "Memproses bukti transfer...";
 
-    statusText.innerText = "🔍 Membaca data rekening & nama...";
-    const result = await Tesseract.recognize(gambarTajam, 'eng', {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          statusText.innerText = `🔍 Membaca struk: ${Math.round(m.progress * 100)}%`;
-        }
-      }
+    const result = await Tesseract.recognize(imageBlob, 'eng', {
+      logger: () => {}
     });
 
     const teksHasil = result.data.text;
-    console.log("TEKS ASLI HASIL SCAN:\n", teksHasil);
-    
-    // Tampilkan kotak teks bantu koreksi cepat jika ada yang salah tangkap
-    tampilkanBantuanTeks(teksHasil);
-    eksekusiParserLengkap(teksHasil);
+    console.log("HASIL BACA SENYAP:\n", teksHasil);
+    eksekusiParserTRFBT(teksHasil);
   } catch (err) {
-    alert("Gagal membaca gambar secara otomatis: " + err.message);
+    console.error("Gagal scan:", err);
   } finally {
     if (loading) loading.classList.add('hidden');
     renderStruk();
   }
 }
 
-// ==================== KOTAK BANTUAN TEKS KLIK 1 KALI LANGSUNG MASUK FORM ====================
-function tampilkanBantuanTeks(rawText) {
-  const box = document.getElementById('boxDebugOcr');
-  const list = document.getElementById('listBarisOcr');
-  if (!box || !list) return;
-
-  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
-  list.innerHTML = '';
-  
-  lines.forEach(line => {
-    const item = document.createElement('div');
-    item.className = "flex justify-between items-center py-1 border-b border-gray-100 hover:bg-amber-100/50 px-1 rounded cursor-pointer";
-    item.innerHTML = `
-      <span class="truncate flex-1 font-semibold">${line}</span>
-      <div class="flex gap-1 ml-2">
-        <button type="button" onclick="isiManual('penerima', '${line.replace(/'/g, "\\'")}')" class="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">Nama</button>
-        <button type="button" onclick="isiManual('rek', '${line.replace(/'/g, "\\'")}')" class="bg-emerald-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">Rek</button>
-      </div>
-    `;
-    list.appendChild(item);
-  });
-
-  box.classList.remove('hidden');
-}
-
-function isiManual(target, teks) {
-  if (target === 'penerima') {
-    const bersih = teks.replace(/[^a-zA-Z\s.'’]/g, '').trim().toUpperCase();
-    document.getElementById('trf_penerima').value = bersih;
-  } else if (target === 'rek') {
-    const angka = teks.replace(/[^0-9]/g, '').trim();
-    if (angka) document.getElementById('trf_rek').value = angka;
-  }
-  renderStruk();
-}
-
-// ==================== PARSER LOGIKA CERDAS SEMUA BANK ====================
-function eksekusiParserLengkap(rawText) {
+// ==================== LOGIKA PARSER PERSIS TRFBT ====================
+function eksekusiParserTRFBT(rawText) {
   if (!rawText) return;
 
   const cleanText = rawText.replace(/\r/g, '');
   const lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-  // --- CEK TOKEN PLN ---
+  // --- CEK JIKA TOKEN LISTRIK PLN ---
   if (/PLN|TOKEN|METER/i.test(cleanText)) {
     document.getElementById('tipeStruk').value = 'token';
     gantiTipeStruk();
     
     const tokenMatch = cleanText.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
-    if (tokenMatch) {
-      document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
-    }
+    if (tokenMatch) document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
+    
     const nominalMatch = cleanText.match(/(?:Total|Nominal|Rp)[\s.:]*([\d\.,]+)/i) || cleanText.match(/(\d{1,3}(?:[.,]\d{3})+)/);
-    if (nominalMatch) {
-      document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
-    }
+    if (nominalMatch) document.getElementById('pln_total').value = parseInt(nominalMatch[1].replace(/[\.,]/g, ''));
     return;
   }
 
@@ -184,23 +110,20 @@ function eksekusiParserLengkap(rawText) {
   let nominalTrf = 0;
   let kodeRef = "";
 
-  // 1. CARI NOMINAL
+  // 1. CARI NOMINAL TRANSFER
   const nominalMatch = cleanText.match(/(?:Nominal|Jumlah\s*Transfer|Total|Sebesar|Rp)[\s.:]*Rp?\s*([\d\.,]+)/i) || cleanText.match(/Rp\s*([\d\.,]+)/i);
   if (nominalMatch) {
     const bersih = nominalMatch[1].replace(/[\.,]/g, '');
     if (parseInt(bersih) >= 1000) nominalTrf = parseInt(bersih);
   }
 
-  // 2. CARI KODE REFERENSI (Harus angka panjang atau kombinasi angka)
-  const refMatch = cleanText.match(/(?:No\.?\s*Reff?|Referensi|ID\s*Transaksi|No\.\s*Transaksi|Order\s*ID)[\s.:]*([A-Za-z0-9]{8,25})/i);
+  // 2. KUNCI KODE REFERENSI TERLEBIH DAHULU (BIAR TIDAK KETUKER SAMA REKENING)
+  const refMatch = cleanText.match(/(?:No\.?\s*Reff?|No\.?\s*Referensi|Referensi|ID\s*Transaksi|No\.\s*Transaksi|Order\s*ID)[\s.:]*([0-9]{10,25})/i);
   if (refMatch) {
-    const cand = refMatch[1].trim();
-    if (/\d/.test(cand) && !/^(TRANSFER|BERHASIL|SUKSES|TRANSAKSI)$/i.test(cand)) {
-      kodeRef = cand;
-    }
+    kodeRef = refMatch[1].trim();
   }
 
-  // 3. PARSING BARIS PER BARIS (BRIMO, SEABANK, DANA, BCA)
+  // 3. PARSING BARIS DEMI BARIS
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
@@ -212,59 +135,53 @@ function eksekusiParserLengkap(rawText) {
       else if (/MANDIRI|LIVIN/i.test(line)) bankTujuan = "MANDIRI";
       else if (/BNI/i.test(line)) bankTujuan = "BNI";
       else if (/JAGO/i.test(line)) bankTujuan = "BANK JAGO";
-      else if (/DANA/i.test(line) && !/SALDO\s*DANA/i.test(line)) bankTujuan = "DANA";
+      else if (/DANA/i.test(line) && !/SALDO/i.test(line)) bankTujuan = "DANA";
       else if (/SHOPEE/i.test(line)) bankTujuan = "SHOPEEPAY";
-      else if (/GOPAY/i.test(line)) bankTujuan = "GOPAY";
-      else if (/OVO/i.test(line)) bankTujuan = "OVO";
     }
 
-    // Deteksi Blok "Tujuan" atau "Penerima" di BRIMO / SEABANK
-    if (/^(Tujuan|Penerima|Ke\s*Rekening|Transfer\s*ke)$/i.test(line) || /^(Tujuan\s*:|Penerima\s*:)/i.test(line)) {
-      // Ambil baris berikutnya yang berupa huruf (Nama)
-      for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
-        const nextLine = lines[j];
-        if (!namaPenerima && /[A-Za-z]{3,}/.test(nextLine) && !/Nominal|Rp|Sumber|Total|Rekening|Bank|Ref/i.test(nextLine)) {
-          namaPenerima = nextLine;
-          continue;
-        }
-        // Ambil baris yang ada angka 9-20 digit (Nomor Rekening)
-        const rek = nextLine.match(/(\d{9,20})/);
-        if (rek && !rekTujuan && rek[1] !== kodeRef) {
-          rekTujuan = rek[1];
+    // Pola BRImo & SeaBank: Setelah kata "Tujuan" / "Penerima" adalah NAMA & REKENING
+    if (/^(Tujuan|Penerima|Transfer\s*ke|Penerima\s*Transfer)$/i.test(line) || /^(Tujuan\s*:|Penerima\s*:)/i.test(line)) {
+      if (lines[i+1] && !/Nominal|Rp|Sumber|Total|Ref|Rekening/i.test(lines[i+1])) {
+        namaPenerima = lines[i+1].trim();
+      }
+      if (lines[i+2]) {
+        const mRek = lines[i+2].match(/(\d{9,20})/);
+        if (mRek && mRek[1] !== kodeRef) {
+          rekTujuan = mRek[1];
         }
       }
     }
   }
 
-  // 4. JIKA FORMAT SEJAJAR (BCA / MANDIRI: "NAMA : BUDI", "REK : 12345")
-  if (!namaPenerima) {
-    const bcaNama = cleanText.match(/(?:Nama|Penerima|Atas\s*Nama|a\.n\.?)[\s.:]*([A-Za-z\s.'’]{3,35})/i);
-    if (bcaNama && !/DANA|SALDO|BANK|NOMINAL|TOTAL|KIRIM/i.test(bcaNama[1])) {
-      namaPenerima = bcaNama[1];
+  // 4. JIKA NO REKENING BELUM DAPAT, CARI DENGAN KATA KUNCI REKENING
+  if (!rekTujuan) {
+    const rekKeyword = cleanText.match(/(?:Rekening|No\.?\s*Rek|No\.?\s*Tujuan|Ke\s*Rekening)[\s.:]*([0-9]{9,20})/i);
+    if (rekKeyword && rekKeyword[1] !== kodeRef) {
+      rekTujuan = rekKeyword[1];
     }
   }
 
-  // 5. CARI DERETAN ANGKA REKENING JIKA BELUM DAPAT
+  // 5. JIKA MASIH BELUM DAPAT, CARI DARI SEMUA DERETAN ANGKA
   const semuaAngka = cleanText.match(/\b\d{9,20}\b/g) || [];
   if (!kodeRef && semuaAngka.length > 0) {
-    kodeRef = semuaAngka[0]; // Angka pertama biasanya ID Transaksi / Ref
+    kodeRef = semuaAngka[0];
   }
   if (!rekTujuan && semuaAngka.length > 0) {
-    for (const n of semuaAngka) {
-      if (n !== kodeRef && n !== nominalTrf.toString()) {
-        rekTujuan = n;
+    for (const num of semuaAngka) {
+      if (num !== kodeRef && num !== nominalTrf.toString()) {
+        rekTujuan = num;
         break;
       }
     }
   }
 
-  // 6. BERSIHKAN NAMA PENERIMA DARI KATA-KATA SAMPAH
+  // 6. BERSIHKAN NAMA PENERIMA
   if (namaPenerima) {
     namaPenerima = namaPenerima.replace(/^(KIRIM\s*UANG|UANG\s*MASUK|TRANSFER|KE|A\.N\.?|AN|DANA|BCA|BRI|MANDIRI|BERHASIL|TUJUAN)\s*/gi, '').trim();
     namaPenerima = namaPenerima.replace(/\s*(BCA|BRI|MANDIRI|BNI|DANA|BERHASIL|SUKSES)$/gi, '').trim();
   }
 
-  // MASUKKAN KE FORM INPUT HTML
+  // MASUKKAN KE FORM INPUT
   if (bankTujuan) document.getElementById('trf_bank').value = bankTujuan;
   if (rekTujuan) document.getElementById('trf_rek').value = rekTujuan;
   if (namaPenerima && namaPenerima.length > 2) document.getElementById('trf_penerima').value = namaPenerima.toUpperCase();
@@ -791,7 +708,7 @@ async function cetakLangsung() {
     printData += formatBaris("NOMINAL", `RP ${nominal.toLocaleString('id-ID')}`);
     printData += formatBaris("ADMIN", `RP ${admin.toLocaleString('id-ID')}`);
     printData += rataTengah("================================");
-    printData += formatBaris("TOTAL", `RP ${total.toLocaleString('id-ID')}`);
+    printData += formatBaris("TOTAL", `RP ${total.toLocaleString('id-ID')} `);
     printData += rataTengah("================================");
 
     simpanKeRiwayat({
@@ -874,3 +791,5 @@ async function kirimBytesKePrinter(str) {
     await new Promise(r => setTimeout(r, 20));
   }
 }
+
+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
