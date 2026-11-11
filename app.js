@@ -27,7 +27,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     // 1. Tangkap Share Teks Langsung
     const sharedText = urlParams.get('text') || urlParams.get('title') || '';
     if (sharedText) {
-      parseMultiBankBukti(sharedText);
+      eksekusiParserLengkap(sharedText);
     }
 
     // 2. Tangkap Share Gambar / POST dari e-wallet
@@ -37,14 +37,14 @@ window.addEventListener('DOMContentLoaded', async () => {
       const cachedText = await cache.match('shared-text');
       if (cachedText) {
         const text = await cachedText.text();
-        parseMultiBankBukti(text);
+        eksekusiParserLengkap(text);
         await cache.delete('shared-text');
       }
 
       const cachedImage = await cache.match('shared-image');
       if (cachedImage) {
         const imageBlob = await cachedImage.blob();
-        await scanGambarBukti(imageBlob);
+        await scanGambarDenganFilter(imageBlob);
         await cache.delete('shared-image');
       }
     }
@@ -56,21 +56,44 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ==================== MESIN OCR SCAN GAMBAR BUKTI ====================
-async function scanGambarBukti(imageBlob) {
+// ==================== PRE-PROCESSING GAMBAR (BINAIRZATION & KONTRAS TINGGI) ====================
+async function filterGambarHitamPutih(blob) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      // Ubah gambar jadi abu-abu + kontras super tajam agar teks terbaca 100%
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i+1], b = d[i+2];
+        const v = (0.2126*r + 0.7152*g + 0.0722*b >= 165) ? 255 : 0;
+        d[i] = d[i+1] = d[i+2] = v;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      canvas.toBlob(resolve, 'image/png');
+    };
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
+// ==================== MESIN OCR SCAN DENGAN FILTER ====================
+async function scanGambarDenganFilter(imageBlob) {
   const loading = document.getElementById('loadingOcr');
   const statusText = document.getElementById('ocrStatusText');
   if (loading) loading.classList.remove('hidden');
 
   try {
-    if (typeof Tesseract === 'undefined') {
-      alert("Sedang memuat engine OCR, pastikan HP ada internet.");
-      return;
-    }
+    statusText.innerText = "⚡ Mempertajam kontras gambar...";
+    const gambarTajam = await filterGambarHitamPutih(imageBlob);
 
-    statusText.innerText = "🔍 Memindai bukti transfer...";
-    
-    const result = await Tesseract.recognize(imageBlob, 'eng', {
+    statusText.innerText = "🔍 Membaca data rekening & nama...";
+    const result = await Tesseract.recognize(gambarTajam, 'eng', {
       logger: m => {
         if (m.status === 'recognizing text') {
           statusText.innerText = `🔍 Membaca struk: ${Math.round(m.progress * 100)}%`;
@@ -80,7 +103,10 @@ async function scanGambarBukti(imageBlob) {
 
     const teksHasil = result.data.text;
     console.log("TEKS ASLI HASIL SCAN:\n", teksHasil);
-    parseMultiBankBukti(teksHasil);
+    
+    // Tampilkan kotak teks bantu koreksi cepat jika ada yang salah tangkap
+    tampilkanBantuanTeks(teksHasil);
+    eksekusiParserLengkap(teksHasil);
   } catch (err) {
     alert("Gagal membaca gambar secara otomatis: " + err.message);
   } finally {
@@ -89,8 +115,44 @@ async function scanGambarBukti(imageBlob) {
   }
 }
 
-// ==================== PARSER CERDAS MULTI-BANK (BRIMO, SEABANK, DANA, BCA, MANDIRI) ====================
-function parseMultiBankBukti(rawText) {
+// ==================== KOTAK BANTUAN TEKS KLIK 1 KALI LANGSUNG MASUK FORM ====================
+function tampilkanBantuanTeks(rawText) {
+  const box = document.getElementById('boxDebugOcr');
+  const list = document.getElementById('listBarisOcr');
+  if (!box || !list) return;
+
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
+  list.innerHTML = '';
+  
+  lines.forEach(line => {
+    const item = document.createElement('div');
+    item.className = "flex justify-between items-center py-1 border-b border-gray-100 hover:bg-amber-100/50 px-1 rounded cursor-pointer";
+    item.innerHTML = `
+      <span class="truncate flex-1 font-semibold">${line}</span>
+      <div class="flex gap-1 ml-2">
+        <button type="button" onclick="isiManual('penerima', '${line.replace(/'/g, "\\'")}')" class="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">Nama</button>
+        <button type="button" onclick="isiManual('rek', '${line.replace(/'/g, "\\'")}')" class="bg-emerald-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">Rek</button>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+
+  box.classList.remove('hidden');
+}
+
+function isiManual(target, teks) {
+  if (target === 'penerima') {
+    const bersih = teks.replace(/[^a-zA-Z\s.'’]/g, '').trim().toUpperCase();
+    document.getElementById('trf_penerima').value = bersih;
+  } else if (target === 'rek') {
+    const angka = teks.replace(/[^0-9]/g, '').trim();
+    if (angka) document.getElementById('trf_rek').value = angka;
+  }
+  renderStruk();
+}
+
+// ==================== PARSER LOGIKA CERDAS SEMUA BANK ====================
+function eksekusiParserLengkap(rawText) {
   if (!rawText) return;
 
   const cleanText = rawText.replace(/\r/g, '');
@@ -122,16 +184,14 @@ function parseMultiBankBukti(rawText) {
   let nominalTrf = 0;
   let kodeRef = "";
 
-  // 1. CARI NOMINAL TRANSFER (Bisa format Rp 1.150.000 atau Rp1150000)
+  // 1. CARI NOMINAL
   const nominalMatch = cleanText.match(/(?:Nominal|Jumlah\s*Transfer|Total|Sebesar|Rp)[\s.:]*Rp?\s*([\d\.,]+)/i) || cleanText.match(/Rp\s*([\d\.,]+)/i);
   if (nominalMatch) {
     const bersih = nominalMatch[1].replace(/[\.,]/g, '');
-    if (parseInt(bersih) >= 1000) {
-      nominalTrf = parseInt(bersih);
-    }
+    if (parseInt(bersih) >= 1000) nominalTrf = parseInt(bersih);
   }
 
-  // 2. CARI KODE REFERENSI (WAJIB ANGKA PANJANG, BUKAN KATA 'TRANSFER')
+  // 2. CARI KODE REFERENSI (Harus angka panjang atau kombinasi angka)
   const refMatch = cleanText.match(/(?:No\.?\s*Reff?|Referensi|ID\s*Transaksi|No\.\s*Transaksi|Order\s*ID)[\s.:]*([A-Za-z0-9]{8,25})/i);
   if (refMatch) {
     const cand = refMatch[1].trim();
@@ -140,110 +200,65 @@ function parseMultiBankBukti(rawText) {
     }
   }
 
-  // ==================== STRATEGI 1: SPESIFIK BRIMO (BRI) ====================
-  // Format BRImo:
-  // "Tujuan"
-  // "NAMA PENERIMA"
-  // "BRI 01234567890" atau "BANK LAIN 123456"
+  // 3. PARSING BARIS PER BARIS (BRIMO, SEABANK, DANA, BCA)
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Deteksi Ref jika belum dapat
-    if (!kodeRef && /Reff?|Ref/i.test(line)) {
-      const m = line.match(/(\d{10,20})/);
-      if (m) kodeRef = m[1];
-      else if (lines[i+1] && /^\d{10,20}$/.test(lines[i+1])) kodeRef = lines[i+1];
+    // Deteksi Bank Tujuan
+    if (!bankTujuan) {
+      if (/SEABANK/i.test(line)) bankTujuan = "SEABANK";
+      else if (/BCA/i.test(line) && !/DARI\s*BCA/i.test(line)) bankTujuan = "BCA";
+      else if (/BRI|BRIMO/i.test(line) && !/DARI\s*BRI/i.test(line)) bankTujuan = "BRI";
+      else if (/MANDIRI|LIVIN/i.test(line)) bankTujuan = "MANDIRI";
+      else if (/BNI/i.test(line)) bankTujuan = "BNI";
+      else if (/JAGO/i.test(line)) bankTujuan = "BANK JAGO";
+      else if (/DANA/i.test(line) && !/SALDO\s*DANA/i.test(line)) bankTujuan = "DANA";
+      else if (/SHOPEE/i.test(line)) bankTujuan = "SHOPEEPAY";
+      else if (/GOPAY/i.test(line)) bankTujuan = "GOPAY";
+      else if (/OVO/i.test(line)) bankTujuan = "OVO";
     }
 
-    // Deteksi Blok "Tujuan" di BRImo
-    if (/^Tujuan$/i.test(line) || /^Penerima$/i.test(line)) {
-      // Baris tepat setelah kata "Tujuan" adalah Nama Penerima
-      if (lines[i+1] && !/Nominal|Rp|Sumber|Total|Rekening|Bank/i.test(lines[i+1])) {
-        namaPenerima = lines[i+1];
-      }
-      // Baris setelah nama biasanya adalah: "BRI 01234567890" atau "SEABANK 901234"
-      if (lines[i+2]) {
-        const rek = lines[i+2].match(/(\d{9,20})/);
-        if (rek && rek[1] !== kodeRef) rekTujuan = rek[1];
-        
-        const b = lines[i+2].match(/(BRI|BCA|MANDIRI|BNI|DANA|SEABANK|JAGO|SHOPEE)/i);
-        if (b) bankTujuan = b[1].toUpperCase();
-      }
-    }
-  }
-
-  // ==================== STRATEGI 2: SPESIFIK SEABANK ====================
-  // Format SeaBank: "Penerima\nNAMA\nBank - No Rek"
-  if (/SEABANK/i.test(cleanText) && (!namaPenerima || !rekTujuan)) {
-    for (let i = 0; i < lines.length; i++) {
-      if (/^Penerima$/i.test(lines[i]) && lines[i+1]) {
-        namaPenerima = lines[i+1];
-      }
-      if (/Rekening\s*Tujuan|No\.?\s*Rekening/i.test(lines[i])) {
-        const m = lines[i].match(/(\d{9,20})/);
-        if (m && m[1] !== kodeRef) rekTujuan = m[1];
-        else if (lines[i+1]) {
-          const m2 = lines[i+1].match(/(\d{9,20})/);
-          if (m2 && m2[1] !== kodeRef) rekTujuan = m2[1];
+    // Deteksi Blok "Tujuan" atau "Penerima" di BRIMO / SEABANK
+    if (/^(Tujuan|Penerima|Ke\s*Rekening|Transfer\s*ke)$/i.test(line) || /^(Tujuan\s*:|Penerima\s*:)/i.test(line)) {
+      // Ambil baris berikutnya yang berupa huruf (Nama)
+      for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (!namaPenerima && /[A-Za-z]{3,}/.test(nextLine) && !/Nominal|Rp|Sumber|Total|Rekening|Bank|Ref/i.test(nextLine)) {
+          namaPenerima = nextLine;
+          continue;
+        }
+        // Ambil baris yang ada angka 9-20 digit (Nomor Rekening)
+        const rek = nextLine.match(/(\d{9,20})/);
+        if (rek && !rekTujuan && rek[1] !== kodeRef) {
+          rekTujuan = rek[1];
         }
       }
     }
   }
 
-  // ==================== STRATEGI 3: SPESIFIK DANA ====================
-  // Format DANA: "Kirim ke [Nama]" atau "Ke [Nama]"
-  if (/DANA/i.test(cleanText) && !namaPenerima) {
-    const danaNama = cleanText.match(/(?:Kirim\s*ke|Transfer\s*ke|Ke)[\s:]*([A-Za-z\s.'’]{3,30})/i);
-    if (danaNama && !/DANA|SALDO|BANK/i.test(danaNama[1])) {
-      namaPenerima = danaNama[1];
+  // 4. JIKA FORMAT SEJAJAR (BCA / MANDIRI: "NAMA : BUDI", "REK : 12345")
+  if (!namaPenerima) {
+    const bcaNama = cleanText.match(/(?:Nama|Penerima|Atas\s*Nama|a\.n\.?)[\s.:]*([A-Za-z\s.'’]{3,35})/i);
+    if (bcaNama && !/DANA|SALDO|BANK|NOMINAL|TOTAL|KIRIM/i.test(bcaNama[1])) {
+      namaPenerima = bcaNama[1];
     }
   }
 
-  // ==================== STRATEGI 4: SPESIFIK BCA MOBILE ====================
-  // Format BCA: "NAMA : JOKO", "KE : 1234567890", "BANK : BRI"
-  if (/BCA/i.test(cleanText)) {
-    const bcaNama = cleanText.match(/NAMA\s*:?\s*([A-Za-z\s.'’]{3,30})/i);
-    if (bcaNama) namaPenerima = bcaNama[1];
-    
-    const bcaRek = cleanText.match(/KE\s*:?\s*(\d{8,18})/i);
-    if (bcaRek && bcaRek[1] !== kodeRef) rekTujuan = bcaRek[1];
-  }
-
-  // ==================== FALLBACK UMUM (JIKA NAMA/REK BELUM KETEMU) ====================
-  // Deteksi Bank Umum jika belum ketemu
-  if (!bankTujuan) {
-    if (/BCA/i.test(cleanText)) bankTujuan = "BCA";
-    else if (/BRI|BRIMO/i.test(cleanText)) bankTujuan = "BRI";
-    else if (/MANDIRI|LIVIN/i.test(cleanText)) bankTujuan = "MANDIRI";
-    else if (/BNI/i.test(cleanText)) bankTujuan = "BNI";
-    else if (/SEABANK/i.test(cleanText)) bankTujuan = "SEABANK";
-    else if (/JAGO/i.test(cleanText)) bankTujuan = "BANK JAGO";
-    else if (/DANA/i.test(cleanText)) bankTujuan = "DANA";
-    else if (/SHOPEE/i.test(cleanText)) bankTujuan = "SHOPEEPAY";
-    else if (/GOPAY/i.test(cleanText)) bankTujuan = "GOPAY";
-    else if (/OVO/i.test(cleanText)) bankTujuan = "OVO";
-  }
-
-  // Cari semua deretan angka 9-20 digit di teks
+  // 5. CARI DERETAN ANGKA REKENING JIKA BELUM DAPAT
   const semuaAngka = cleanText.match(/\b\d{9,20}\b/g) || [];
-  if (!rekTujuan) {
-    for (const num of semuaAngka) {
-      if (num !== kodeRef && num !== nominalTrf.toString()) {
-        rekTujuan = num;
-        break;
-      }
-    }
+  if (!kodeRef && semuaAngka.length > 0) {
+    kodeRef = semuaAngka[0]; // Angka pertama biasanya ID Transaksi / Ref
   }
-  if (!kodeRef && semuaAngka.length > 1) {
-    for (const num of semuaAngka) {
-      if (num !== rekTujuan && num !== nominalTrf.toString()) {
-        kodeRef = num;
+  if (!rekTujuan && semuaAngka.length > 0) {
+    for (const n of semuaAngka) {
+      if (n !== kodeRef && n !== nominalTrf.toString()) {
+        rekTujuan = n;
         break;
       }
     }
   }
 
-  // Pembersihan Nama Penerima dari kata-kata sampah sistem
+  // 6. BERSIHKAN NAMA PENERIMA DARI KATA-KATA SAMPAH
   if (namaPenerima) {
     namaPenerima = namaPenerima.replace(/^(KIRIM\s*UANG|UANG\s*MASUK|TRANSFER|KE|A\.N\.?|AN|DANA|BCA|BRI|MANDIRI|BERHASIL|TUJUAN)\s*/gi, '').trim();
     namaPenerima = namaPenerima.replace(/\s*(BCA|BRI|MANDIRI|BNI|DANA|BERHASIL|SUKSES)$/gi, '').trim();
