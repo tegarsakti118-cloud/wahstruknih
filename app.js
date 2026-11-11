@@ -4,6 +4,26 @@ if ('serviceWorker' in navigator) {
 }
 
 let printerCharacteristic = null;
+let currentTema = 'standard';
+let dataAktifStruk = {
+  tipe: 'transfer',
+  toko: 'SakaPay',
+  waktuTgl: '2026-11-01',
+  waktuJam: '11:11:00',
+  ref: '2026110110121410010100166584909647116',
+  bankTujuan: 'SEABANK',
+  rekTujuan: '4538',
+  namaPenerima: 'TEGAR DISTA SAKTIAWAN',
+  nominal: 200000,
+  admin: 3000,
+  // PLN Token
+  tokenNumber: '4949-2577-3479-4880-0611',
+  plnNama: 'SRI DEWI',
+  plnMeter: '50201220816',
+  plnKwh: '30.10 KWH',
+  plnTotal: 25000,
+  plnRef: '1462747568'
+};
 
 const BLE_SERVICES = [
   '000018f0-0000-1000-8000-00805f9b34fb',
@@ -18,495 +38,402 @@ const defaultPengirimList = [
 ];
 
 window.addEventListener('DOMContentLoaded', async () => {
-  try {
-    muatPengaturanTersimpan();
-    inisialisasiPengirim();
+  muatPengaturan();
+  inisialisasiPengirim();
+  renderRiwayatSemua();
 
-    const urlParams = new URLSearchParams(window.location.search);
+  // Tangkap Share Gambar / Teks dari Android
+  const urlParams = new URLSearchParams(window.location.search);
+  const sharedText = urlParams.get('text') || urlParams.get('title') || '';
+  if (sharedText) {
+    parseOcrTextMaster(sharedText);
+    bukaPreview();
+  }
 
-    // 1. Tangkap Share Teks Langsung
-    const sharedText = urlParams.get('text') || urlParams.get('title') || '';
-    if (sharedText) {
-      parseBuktiTransferPresisi(sharedText);
+  if (urlParams.get('shared') === 'true' && 'caches' in window) {
+    const cache = await caches.open('wahstruk-share');
+    const cachedImage = await cache.match('shared-image');
+    if (cachedImage) {
+      const blob = await cachedImage.blob();
+      await scanGambarOcr(blob);
+      await cache.delete('shared-image');
+      bukaPreview();
     }
-
-    // 2. Tangkap Share Gambar dari e-wallet
-    if (urlParams.get('shared') === 'true' && 'caches' in window) {
-      const cache = await caches.open('wahstruk-share');
-      
-      const cachedText = await cache.match('shared-text');
-      if (cachedText) {
-        const text = await cachedText.text();
-        parseBuktiTransferPresisi(text);
-        await cache.delete('shared-text');
-      }
-
-      const cachedImage = await cache.match('shared-image');
-      if (cachedImage) {
-        const imageBlob = await cachedImage.blob();
-        await scanGambarDenganFilterCerdas(imageBlob);
-        await cache.delete('shared-image');
-      }
-    }
-  } catch (err) {
-    console.error("Gagal inisialisasi:", err);
-  } finally {
-    renderStruk();
-    renderRiwayat();
   }
 });
 
-// ==================== FILTER PENGHAPUS IKON WARNA ====================
-async function bersihkanIkonGambar(blob) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const scale = 1.5;
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imgData.data;
-
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i+1], b = d[i+2];
-        const isColor = Math.abs(r - g) > 28 || Math.abs(r - b) > 28 || Math.abs(g - b) > 28;
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-
-        if (isColor || brightness > 135) {
-          d[i] = d[i+1] = d[i+2] = 255;
-        } else {
-          d[i] = d[i+1] = d[i+2] = 0;
-        }
-      }
-
-      ctx.putImageData(imgData, 0, 0);
-      canvas.toBlob(resolve, 'image/png');
-    };
-    img.src = URL.createObjectURL(blob);
-  });
-}
-
-// ==================== SCAN OCR ====================
-async function scanGambarDenganFilterCerdas(imageBlob) {
-  const loading = document.getElementById('loadingOcr');
-  const statusText = document.getElementById('ocrStatusText');
-  if (loading) loading.classList.remove('hidden');
-
-  try {
-    statusText.innerText = "Membaca bukti transaksi...";
-    const gambarBersih = await bersihkanIkonGambar(imageBlob);
-
-    const result = await Tesseract.recognize(gambarBersih, 'eng', {
-      logger: () => {}
-    });
-
-    const teksHasil = result.data.text;
-    console.log("HASIL SCAN OCR RAW:\n", teksHasil);
-    parseBuktiTransferPresisi(teksHasil);
-  } catch (err) {
-    console.error("Gagal scan:", err);
-  } finally {
-    if (loading) loading.classList.add('hidden');
-    renderStruk();
-  }
-}
-
-// ==================== PARSER MASTER PRESISI ====================
-function parseBuktiTransferPresisi(rawText) {
-  if (!rawText) return;
-
-  // Lebur semua baris jadi 1 aliran teks panjang
-  const oneLine = rawText.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ');
-
-  // ==========================================
-  // JALUR 1: STRUK TOKEN LISTRIK PLN (PERSIS FOTO ASLI)
-  // ==========================================
-  if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA/i.test(oneLine)) {
-    document.getElementById('tipeStruk').value = 'token';
-    gantiTipeStruk();
-
-    // A. 20 Digit Angka Token (Contoh: 4949-2577-3479-4880-0611)
-    const tokenMatch = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
-    if (tokenMatch) {
-      document.getElementById('pln_token').value = tokenMatch[1].replace(/-/g, ' ');
-    }
-
-    // B. No Meter / ID PLN (Contoh: 50201220816)
-    const meterMatch = oneLine.match(/(?:ID\s*PLN|No\.?\s*Meter|ID\s*Pel|IDPEL)[\s.:]*([0-9]{10,13})/i);
-    if (meterMatch) {
-      document.getElementById('pln_meter').value = meterMatch[1].trim();
-    } else {
-      const any11Digits = oneLine.match(/\b\d{11,12}\b/g) || [];
-      if (any11Digits.length > 0) document.getElementById('pln_meter').value = any11Digits[0];
-    }
-
-    // C. Nama Pelanggan (Contoh: SRI DEWI)
-    const namaPlnMatch = oneLine.match(/NAMA[\s.:]+([A-Za-z\s.'’]{3,30}?)(?:\s+TARIF|\s+DAYA|\s+JUMLAH|\s+PRODUK|\s+HARGA|\s+TOTAL|\s+ID|$)/i);
-    if (namaPlnMatch) {
-      document.getElementById('pln_nama').value = namaPlnMatch[1].trim().toUpperCase();
-    }
-
-    // D. Jumlah Daya / KWH (Contoh: 30.10 KWH)
-    const kwhMatch = oneLine.match(/(?:JUMLAH\s*DAYA|JUMLAH\s*KWH|KWH)[\s.:]*([0-9.,]+\s*KWH)/i) || oneLine.match(/([0-9.,]+\s*KWH)/i);
-    if (kwhMatch) {
-      document.getElementById('pln_kwh').value = kwhMatch[1].replace(/\s+/g, '').toUpperCase();
-    }
-
-    // E. Total Bayar / Harga (Contoh: Rp 25.000)
-    const hargaMatch = oneLine.match(/(?:HARGA|TOTAL|TAGIHAN)[\s.:]*Rp?\s*([\d.,]+)/i) || oneLine.match(/Rp\s*([\d.,]+)/i);
-    if (hargaMatch) {
-      document.getElementById('pln_total').value = parseInt(hargaMatch[1].replace(/[\.,]/g, ''));
-    }
-
-    // F. ID TRX / Ref (Contoh: 1462747568)
-    const idTrxMatch = oneLine.match(/(?:ID\s*TRX|NO\.?\s*REF|REF)[\s.:]*([0-9]{8,16})/i);
-    if (idTrxMatch) {
-      localStorage.setItem('ws_pln_ref', idTrxMatch[1].trim());
-    }
-
-    return;
-  }
-
-  // ==========================================
-  // JALUR 2: TRANSFER BANK & E-WALLET
-  // ==========================================
-  document.getElementById('tipeStruk').value = 'transfer';
-  gantiTipeStruk();
-
-  let bankTujuan = "";
-  let rekTujuan = "";
-  let namaPenerima = "";
-  let nominalTrf = 0;
-  let kodeRef = "";
-
-  // 1. Nominal Transfer
-  const nomMatches = oneLine.match(/Rp\s*([\d\.,]+)/gi);
-  if (nomMatches) {
-    for (const nm of nomMatches) {
-      const val = parseInt(nm.replace(/[^0-9]/g, ''));
-      if (val >= 1000) {
-        nominalTrf = val;
-        break;
-      }
-    }
-  }
-
-  // ==================== SUB-JALUR A: DANA ====================
-  const isDANA = /DANA/i.test(oneLine) || /Send\s*Money|Receiver\s*Detail|Total\s*Payment|Transaction\s*success/i.test(oneLine);
-
-  if (isDANA) {
-    // A. Nama Penerima & Bank DANA
-    const danaNamaMatch = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-_–~.]*\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|BANK\s*[A-Z]+)/i);
-    if (danaNamaMatch) {
-      namaPenerima = danaNamaMatch[1].trim();
-      bankTujuan = danaNamaMatch[2].trim().toUpperCase().replace(/BANK\s*/g, '');
-    }
-
-    if (!namaPenerima) {
-      const nameDetail = oneLine.match(/(?:Receiver\s*Detail|Detail\s*Penerima).*?(?:Name|Nama)[\s:]*([A-Za-z\s.'’]{3,35})\s+(?:Bank|Akun|Nominal|Total)/i);
-      if (nameDetail) namaPenerima = nameDetail[1].trim();
-    }
-
-    if (!bankTujuan) {
-      if (/SEABANK/i.test(oneLine)) bankTujuan = "SEABANK";
-      else if (/BRI/i.test(oneLine)) bankTujuan = "BRI";
-      else if (/BCA/i.test(oneLine)) bankTujuan = "BCA";
-      else if (/MANDIRI/i.test(oneLine)) bankTujuan = "MANDIRI";
-      else if (/BNI/i.test(oneLine)) bankTujuan = "BNI";
-    }
-
-    // B. No Rekening DANA (Tangkap angka 4 digit di belakang nama bank atau sensor ••••)
-    const danaRekMatch = oneLine.match(/(?:Seabank|BCA|BRI|BNI|Mandiri|Bank)[A-Za-z\s]*?[•*.\s-_]*?(\d[\d\s]{2,5})\b/i) || oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/);
-    if (danaRekMatch) {
-      const bersihAngka = danaRekMatch[1].replace(/\s/g, '');
-      rekTujuan = "••••" + bersihAngka.slice(-4);
-    } else {
-      const danaPhone = oneLine.match(/\b(08[0-9•*.-]{8,15})\b/);
-      if (danaPhone) rekTujuan = danaPhone[1].replace(/\s/g, '');
-    }
-
-    // C. Kode Referensi DANA
-    const extSn = oneLine.match(/External\s*Serial\s*Number\s*([0-9\s]{10,25})/i);
-    if (extSn) {
-      kodeRef = extSn[1].replace(/\s/g, '');
-    } else {
-      const txId = oneLine.match(/Transaction\s*ID\s*([0-9\s]{15,40})/i);
-      if (txId) kodeRef = txId[1].replace(/\s/g, '').substring(0, 18);
-    }
-  }
-
-  // ==================== SUB-JALUR B: QITA BY BRI ====================
-  const isQitaBRI = /Qita|Transfer\s*Bank\s*BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("Referensi"));
-
-  if (isQitaBRI && (!namaPenerima || !rekTujuan)) {
-    bankTujuan = "BRI";
-
-    // No. Referensi 12 Digit BRI (Contoh: 239773648905)
-    const bri12Digits = oneLine.match(/\b\d{12}\b/g) || [];
-    for (const d of bri12Digits) {
-      if (!rekTujuan.includes(d)) {
-        kodeRef = d;
-        break;
-      }
-    }
-    if (!kodeRef) {
-      const briRefAlt = oneLine.match(/Referensi[^\d]*(\d{10,16})/i);
-      if (briRefAlt) kodeRef = briRefAlt[1];
-    }
-
-    // Nama & Rekening Penerima BRI
-    const qitaPenerimaMatch = oneLine.match(/([A-Za-z\s.'’]{3,30})\s+BANK\s*BRI\s*[-–]\s*([0-9\s]{12,25})/i);
-    if (qitaPenerimaMatch) {
-      const calonNama = qitaPenerimaMatch[1].trim();
-      const calonRek = qitaPenerimaMatch[2].replace(/\s/g, '');
-
-      if (!calonRek.includes('*')) {
-        namaPenerima = calonNama;
-        rekTujuan = calonRek;
-      }
-    }
-
-    if (!rekTujuan) {
-      const briRek = oneLine.match(/BANK\s*BRI\s*[-–]\s*([0-9\s]{14,22})/i);
-      if (briRek && !briRek[1].includes('*')) {
-        rekTujuan = briRek[1].replace(/\s/g, '');
-      }
-    }
-  }
-
-  // ==================== SUB-JALUR C: SEABANK ====================
-  const isSeaBank = /Hasil\s*Transfer|Pembayaran\s*Diterima|SeaBank/i.test(oneLine) || oneLine.includes("Jumlah Transfer");
-
-  if (isSeaBank && (!namaPenerima || !rekTujuan)) {
-    const seaRef = oneLine.match(/No\.?\s*Transaksi\s*([0-9\s]{15,30})/i);
-    if (seaRef) kodeRef = seaRef[1].replace(/\s/g, '');
-
-    const seaKeMatch = oneLine.match(/Ke\s+([A-Za-z\s.'’]{3,30})\s+([A-Z]{3,10})[\s:]+([0-9]{9,20})/i);
-    if (seaKeMatch) {
-      namaPenerima = seaKeMatch[1].trim();
-      bankTujuan = seaKeMatch[2].toUpperCase();
-      rekTujuan = seaKeMatch[3].trim();
-    }
-  }
-
-  // ==================== FALLBACK UMUM ====================
-  if (!bankTujuan) {
-    if (/SEABANK/i.test(oneLine)) bankTujuan = "SEABANK";
-    else if (/BCA/i.test(oneLine)) bankTujuan = "BCA";
-    else if (/BRI|BRIMO/i.test(oneLine)) bankTujuan = "BRI";
-    else if (/MANDIRI|LIVIN/i.test(oneLine)) bankTujuan = "MANDIRI";
-    else if (/BNI/i.test(oneLine)) bankTujuan = "BNI";
-    else if (/DANA/i.test(oneLine)) bankTujuan = "DANA";
-    else if (/SHOPEE/i.test(oneLine)) bankTujuan = "SHOPEEPAY";
-  }
-
-  if (!kodeRef) {
-    const genRef = oneLine.match(/(?:No\.?\s*Ref(?:erensi)?|No\.?\s*Transaksi|ID\s*Transaksi)\s*([0-9]{10,28})/i);
-    if (genRef) kodeRef = genRef[1];
-  }
-
-  // Pembersihan Nama
-  if (namaPenerima) {
-    namaPenerima = namaPenerima.replace(/^[©®℗@0-9\W_]+/g, '').trim();
-    namaPenerima = namaPenerima.replace(/[©®℗@]/g, '').trim();
-    namaPenerima = namaPenerima.replace(/^(KIRIM\s*UANG|UANG\s*MASUK|TRANSFER|KE|A\.N\.?|AN|DANA|BCA|BRI|MANDIRI|BERHASIL|TUJUAN)\s*/gi, '').trim();
-    if (/^Pedi Setiadi$/i.test(namaPenerima)) namaPenerima = "Dedi Setiadi";
-  }
-
-  // Masukkan ke Form Input HTML
-  if (bankTujuan) document.getElementById('trf_bank').value = bankTujuan;
-  if (rekTujuan) document.getElementById('trf_rek').value = rekTujuan;
-  if (namaPenerima && namaPenerima.length > 1) document.getElementById('trf_penerima').value = namaPenerima.toUpperCase();
-  if (nominalTrf > 0) document.getElementById('trf_nominal').value = nominalTrf;
-  if (kodeRef) document.getElementById('trf_ref').value = kodeRef;
-}
-
-// ==================== NAVIGASI BOTTOM BAR ====================
-function pindahTab(namaTab) {
-  document.getElementById('tab-cetak').classList.add('hidden');
-  document.getElementById('tab-riwayat').classList.add('hidden');
-  document.getElementById('tab-setelan').classList.add('hidden');
-
-  ['cetak', 'riwayat', 'setelan'].forEach(tab => {
-    const navBtn = document.getElementById(`nav-${tab}`);
-    navBtn.className = "flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 px-4 py-1 rounded-xl transition-all";
+// ==================== NAVIGASI TAB (BERANDA, PRINTER, SETELAN) ====================
+function pindahTab(tab) {
+  ['beranda', 'printer', 'setelan', 'aktivitas', 'preview'].forEach(v => {
+    const el = document.getElementById(`view-${v}`);
+    if (el) el.classList.add('hidden');
   });
 
-  document.getElementById(`tab-${namaTab}`).classList.remove('hidden');
-  document.getElementById(`nav-${namaTab}`).className = "flex flex-col items-center gap-0.5 text-blue-600 font-bold px-4 py-1 rounded-xl transition-all";
+  const target = document.getElementById(`view-${tab}`);
+  if (target) target.classList.remove('hidden');
 
-  if (namaTab === 'riwayat') renderRiwayat();
+  ['beranda', 'printer', 'setelan'].forEach(nav => {
+    const btn = document.getElementById(`nav-${nav}`);
+    if (btn) btn.className = "flex flex-col items-center gap-1 text-slate-400 hover:text-slate-600 transition-all";
+  });
+
+  const activeBtn = document.getElementById(`nav-${tab}`);
+  if (activeBtn) activeBtn.className = "flex flex-col items-center gap-1 text-blue-600 font-bold transition-all";
+
+  if (tab === 'aktivitas') renderRiwayatSemua();
 }
 
-// ==================== PENGATURAN TOKO ====================
-function muatPengaturanTersimpan() {
-  if (localStorage.getItem('ws_nama')) document.getElementById('namaToko').value = localStorage.getItem('ws_nama');
-  if (localStorage.getItem('ws_cs')) document.getElementById('csNumber').value = localStorage.getItem('ws_cs');
-  if (localStorage.getItem('ws_tid')) document.getElementById('tidCode').value = localStorage.getItem('ws_tid');
-  if (localStorage.getItem('ws_admin')) document.getElementById('trf_admin').value = localStorage.getItem('ws_admin');
-  
-  if (localStorage.getItem('ws_fitur_pengirim') !== null) {
-    const aktif = localStorage.getItem('ws_fitur_pengirim') === 'true';
-    document.getElementById('togglePengirim').checked = aktif;
-    toggleContainerPengirim(aktif);
-  }
+function kembaliKeBeranda() {
+  pindahTab('beranda');
 }
 
-function simpanPengaturan() {
-  localStorage.setItem('ws_nama', document.getElementById('namaToko').value);
-  localStorage.setItem('ws_cs', document.getElementById('csNumber').value);
-  localStorage.setItem('ws_tid', document.getElementById('tidCode').value);
-  localStorage.setItem('ws_admin', document.getElementById('trf_admin').value);
+function bukaPreview() {
+  pindahTab('preview');
   renderStruk();
 }
 
-function setAdminCepat(nominal) {
-  document.getElementById('trf_admin').value = nominal;
-  simpanPengaturan();
+// ==================== PROSES OCR GAMBAR ====================
+async function bacaGambarManual(event, tipe) {
+  const file = event.target.files[0];
+  if (!file) return;
+  dataAktifStruk.tipe = tipe;
+  await scanGambarOcr(file);
+  bukaPreview();
 }
 
-// ==================== SISTEM DAFTAR PENGIRIM ====================
+async function scanGambarOcr(imageBlob) {
+  try {
+    const result = await Tesseract.recognize(imageBlob, 'eng', { logger: () => {} });
+    parseOcrTextMaster(result.data.text);
+  } catch (err) {
+    alert("Gagal membaca bukti: " + err.message);
+  }
+}
+
+// ==================== PARSER MASTER TEPAT SASARAN ====================
+function parseOcrTextMaster(rawText) {
+  if (!rawText) return;
+  const oneLine = rawText.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ');
+
+  // 1. FORMAT TOKEN LISTRIK
+  if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA/i.test(oneLine)) {
+    dataAktifStruk.tipe = 'token';
+    const tkn = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
+    if (tkn) dataAktifStruk.tokenNumber = tkn[1].replace(/-/g, ' ');
+
+    const idpln = oneLine.match(/(?:ID\s*PLN|No\.?\s*Meter|ID\s*Pel)[\s.:]*([0-9]{10,13})/i);
+    if (idpln) dataAktifStruk.plnMeter = idpln[1];
+
+    const nama = oneLine.match(/NAMA[\s.:]+([A-Za-z\s.'’]{3,30}?)(?:\s+TARIF|\s+DAYA|\s+JUMLAH|\s+HARGA|\s+TOTAL)/i);
+    if (nama) dataAktifStruk.plnNama = nama[1].trim().toUpperCase();
+
+    const kwh = oneLine.match(/(?:JUMLAH\s*DAYA|JUMLAH\s*KWH|KWH)[\s.:]*([0-9.,]+\s*KWH)/i);
+    if (kwh) dataAktifStruk.plnKwh = kwh[1].toUpperCase();
+
+    const hrg = oneLine.match(/(?:HARGA|TOTAL)[\s.:]*Rp?\s*([\d.,]+)/i);
+    if (hrg) dataAktifStruk.plnTotal = parseInt(hrg[1].replace(/[^0-9]/g, ''));
+
+    const trx = oneLine.match(/ID\s*TRX[\s.:]*([0-9]{8,16})/i);
+    if (trx) dataAktifStruk.plnRef = trx[1];
+    return;
+  }
+
+  // 2. FORMAT TRANSFER (DANA, SEABANK, QITA BRI)
+  dataAktifStruk.tipe = 'transfer';
+
+  // Nominal
+  const nom = oneLine.match(/Rp\s*([\d.,]+)/i);
+  if (nom) dataAktifStruk.nominal = parseInt(nom[1].replace(/[^0-9]/g, ''));
+
+  // A. Format DANA
+  if (/DANA|Send\s*Money|Receiver\s*Detail/i.test(oneLine)) {
+    const danaSum = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-–]\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|[A-Za-z]+)\s*(?:[•*.\s\d]*(\d{4}))/i);
+    if (danaSum) {
+      dataAktifStruk.namaPenerima = danaSum[1].trim().toUpperCase();
+      dataAktifStruk.bankTujuan = danaSum[2].trim().toUpperCase();
+      dataAktifStruk.rekTujuan = danaSum[3];
+    }
+
+    const txId = oneLine.match(/(?:Transaction\s*ID|Merchant\s*Order\s*ID)[\s:]*([0-9\s]{20,45})/i);
+    if (txId) dataAktifStruk.ref = txId[1].replace(/\s/g, '');
+  }
+
+  // B. Format Qita BRI
+  else if (/Qita|Transfer\s*Bank\s*BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("Referensi"))) {
+    dataAktifStruk.bankTujuan = "BRI";
+    const refBri = oneLine.match(/No\.?\s*Referensi[\s:]*([0-9]{10,16})/i) || oneLine.match(/\b\d{12}\b/);
+    if (refBri) dataAktifStruk.ref = refBri[1] || refBri[0];
+
+    const briAcc = oneLine.match(/([A-Za-z\s.'’]{3,30})\s+BANK\s*BRI\s*[-–]\s*([0-9\s]{12,25})/i);
+    if (briAcc && !briAcc[2].includes('*')) {
+      dataAktifStruk.namaPenerima = briAcc[1].trim().toUpperCase();
+      dataAktifStruk.rekTujuan = briAcc[2].replace(/\s/g, '');
+    }
+  }
+
+  // C. Format SeaBank
+  else if (/SeaBank|Pembayaran\s*Diterima|Hasil\s*Transfer/i.test(oneLine)) {
+    const seaKe = oneLine.match(/Ke\s+([A-Za-z\s.'’]{3,30})\s+([A-Z]{3,10})[\s:]+([0-9]{9,20})/i);
+    if (seaKe) {
+      dataAktifStruk.namaPenerima = seaKe[1].trim().toUpperCase();
+      dataAktifStruk.bankTujuan = seaKe[2].toUpperCase();
+      dataAktifStruk.rekTujuan = seaKe[3].trim();
+    }
+    const seaRef = oneLine.match(/No\.?\s*Transaksi[\s:]*([0-9\s]{15,30})/i);
+    if (seaRef) dataAktifStruk.ref = seaRef[1].replace(/\s/g, '');
+  }
+}
+
+// ==================== RENDER PREVIEW STRUK THERMAL ====================
+function renderStruk() {
+  const container = document.getElementById('strukPrintArea');
+  if (!container) return;
+
+  const toko = dataAktifStruk.toko || "SakaPay";
+  const logo = localStorage.getItem('ws_logo');
+  const pengirimAktif = getPengirimAktif();
+  const waktu = getWaktuSekarang();
+  let html = '';
+
+  // HEADER LOGO
+  if (logo) {
+    html += `<div class="flex justify-center mb-1"><img src="${logo}" class="max-h-12 object-contain filter grayscale contrast-200"></div>`;
+  } else {
+    html += `<div class="text-center font-bold text-xl mb-1">⚡</div>`;
+  }
+  html += `<div class="text-center font-bold text-xs tracking-widest mb-2 uppercase">${toko}</div>`;
+
+  if (dataAktifStruk.tipe === 'transfer') {
+    const total = dataAktifStruk.nominal + dataAktifStruk.admin;
+
+    html += `
+      <div class="my-1 text-center">================================</div>
+      <div class="flex justify-between"><span>TANGGAL</span><span>${dataAktifStruk.waktuTgl || waktu.tgl}</span></div>
+      <div class="flex justify-between"><span>WAKTU</span><span>${dataAktifStruk.waktuJam || waktu.jam}</span></div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="text-center font-bold">KODE REFERENSI</div>
+      <div class="text-center mb-1 font-mono break-all text-[10px]">${dataAktifStruk.ref}</div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="text-center font-bold mb-1">DATA PENGIRIM</div>
+      <div class="flex justify-between"><span>NAMA</span><span>${pengirimAktif.nama}</span></div>
+      <div class="flex justify-between"><span>BANK</span><span>${pengirimAktif.bank}</span></div>
+      <div class="flex justify-between"><span>NO REKENING</span><span class="font-mono">${pengirimAktif.rek}</span></div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="text-center font-bold mb-1">DATA PENERIMA</div>
+      <div class="flex justify-between"><span>BANK TUJUAN</span><span>${dataAktifStruk.bankTujuan}</span></div>
+      <div class="flex justify-between"><span>NO REKENING</span><span class="font-mono">${dataAktifStruk.rekTujuan}</span></div>
+      <div class="flex justify-between"><span>PENERIMA</span><span class="font-bold text-right">${dataAktifStruk.namaPenerima}</span></div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="flex justify-between"><span>NOMINAL</span><span>RP ${dataAktifStruk.nominal.toLocaleString('id-ID')}</span></div>
+      <div class="flex justify-between"><span>ADMIN</span><span>RP ${dataAktifStruk.admin.toLocaleString('id-ID')}</span></div>
+      <div class="my-1 text-center">================================</div>
+      <div class="flex justify-between font-bold text-xs"><span>TOTAL</span><span>RP ${total.toLocaleString('id-ID')}</span></div>
+      <div class="my-1 text-center">================================</div>
+    `;
+  } else {
+    // Struk Token PLN
+    const tokenParts = dataAktifStruk.tokenNumber.split(' ');
+    const b1 = tokenParts.slice(0, 3).join(' ') || dataAktifStruk.tokenNumber.substring(0, 14);
+    const b2 = tokenParts.slice(3).join(' ') || dataAktifStruk.tokenNumber.substring(14);
+
+    html += `
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="text-center font-bold">TOKEN LISTRIK PRABAYAR</div>
+      <div class="text-center text-[10px]">${waktu.lengkap}</div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="text-center font-bold text-sm tracking-wider my-2 font-mono">
+        <div>${b1}</div>
+        <div>${b2}</div>
+      </div>
+      <div class="text-center text-[10px] mb-2 font-bold">MASUKKAN 20 ANGKA DI METERAN</div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="flex justify-between"><span>NO METER :</span><span class="font-mono">${dataAktifStruk.plnMeter}</span></div>
+      <div class="flex justify-between"><span>NAMA     :</span><span class="font-bold">${dataAktifStruk.plnNama}</span></div>
+      <div class="flex justify-between"><span>KWH      :</span><span>${dataAktifStruk.plnKwh}</span></div>
+      <div class="my-1 text-center">--------------------------------</div>
+      <div class="flex justify-between font-bold"><span>TOTAL</span><span>RP ${dataAktifStruk.plnTotal.toLocaleString('id-ID')}</span></div>
+      <div class="flex justify-between text-[10px]"><span>REF:</span><span class="font-mono">${dataAktifStruk.plnRef}</span></div>
+    `;
+  }
+
+  // FOOTER RESMI
+  const cs = localStorage.getItem('ws_cs') || "0857-8024-3664";
+  html += `
+    <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
+    <div class="text-center text-[10px]">TERIMA KASIH ATAS</div>
+    <div class="text-center text-[10px] font-bold">KEPERCAYAAN ANDA</div>
+    <div class="my-1 text-center">--------------------------------</div>
+    <div class="text-center text-[10px]">CS / BANTUAN:</div>
+    <div class="text-center text-[11px] font-bold font-mono">${cs}</div>
+    <div class="text-center text-[10px] mt-1">SIMPAN STRUK INI SEBAGAI BUKTI SAH</div>
+  `;
+
+  container.innerHTML = html;
+}
+
+// ==================== MODAL EDIT DATA LENGKAP ====================
+function bukaModalEditLengkap() {
+  document.getElementById('edit_namaToko').value = dataAktifStruk.toko || "SakaPay";
+  document.getElementById('edit_waktu').value = `${dataAktifStruk.waktuTgl} ${dataAktifStruk.waktuJam}`;
+  document.getElementById('edit_penerima').value = dataAktifStruk.namaPenerima;
+  document.getElementById('edit_bank').value = dataAktifStruk.bankTujuan;
+  document.getElementById('edit_rek').value = dataAktifStruk.rekTujuan;
+  document.getElementById('edit_ref').value = dataAktifStruk.ref;
+  document.getElementById('edit_nominal').value = dataAktifStruk.nominal;
+  document.getElementById('edit_admin').value = dataAktifStruk.admin;
+
+  // Isi dropdown pengirim
+  const select = document.getElementById('edit_selectPengirim');
+  select.innerHTML = '';
+  getDaftarPengirim().forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.innerText = `${p.nama} (${p.bank})`;
+    if (p.isDefault) opt.selected = true;
+    select.appendChild(opt);
+  });
+
+  document.getElementById('modalEditLengkap').classList.remove('hidden');
+}
+
+function tutupModalEditLengkap() {
+  document.getElementById('modalEditLengkap').classList.add('hidden');
+}
+
+function simpanEditLengkap() {
+  dataAktifStruk.toko = document.getElementById('edit_namaToko').value;
+  const w = document.getElementById('edit_waktu').value.split(' ');
+  dataAktifStruk.waktuTgl = w[0] || '2026-11-01';
+  dataAktifStruk.waktuJam = w[1] || '11:11:00';
+  dataAktifStruk.namaPenerima = document.getElementById('edit_penerima').value.toUpperCase();
+  dataAktifStruk.bankTujuan = document.getElementById('edit_bank').value.toUpperCase();
+  dataAktifStruk.rekTujuan = document.getElementById('edit_rek').value;
+  dataAktifStruk.ref = document.getElementById('edit_ref').value;
+  dataAktifStruk.nominal = parseInt(document.getElementById('edit_nominal').value) || 0;
+  dataAktifStruk.admin = parseInt(document.getElementById('edit_admin').value) || 0;
+
+  tutupModalEditLengkap();
+  renderStruk();
+}
+
+function bukaFormManualKosong(tipe) {
+  dataAktifStruk.tipe = tipe;
+  bukaModalEditLengkap();
+}
+
+// ==================== PENGIRIM & SETELAN ====================
 function getDaftarPengirim() {
-  const data = localStorage.getItem('ws_daftar_pengirim');
-  return data ? JSON.parse(data) : defaultPengirimList;
+  const d = localStorage.getItem('ws_daftar_pengirim');
+  return d ? JSON.parse(d) : defaultPengirimList;
 }
 
-function saveDaftarPengirim(list) {
+function getPengirimAktif() {
+  const list = getDaftarPengirim();
+  return list.find(p => p.isDefault) || list[0] || { nama: "KONTER", bank: "BANK", rek: "xxxx" };
+}
+
+function inisialisasiPengirim() {
+  const list = getDaftarPengirim();
+  const c = document.getElementById('listPengirim');
+  if (!c) return;
+  c.innerHTML = '';
+
+  list.forEach(item => {
+    const div = document.createElement('div');
+    div.className = `p-3 rounded-2xl border flex items-center justify-between ${item.isDefault ? 'border-blue-500 bg-blue-50/40' : 'border-slate-200'}`;
+    div.innerHTML = `
+      <div class="flex items-center gap-2.5 cursor-pointer flex-1" onclick="jadikanDefault(${item.id})">
+        <input type="radio" name="rPengirim" ${item.isDefault ? 'checked' : ''} class="w-4 h-4 text-blue-600">
+        <div>
+          <div class="flex items-center gap-1.5">
+            <span class="font-extrabold text-xs">${item.nama}</span>
+            ${item.isDefault ? '<span class="bg-blue-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">DEFAULT</span>' : ''}
+          </div>
+          <div class="text-[10px] text-slate-400 font-mono">${item.bank} - ${item.rek}</div>
+        </div>
+      </div>
+      <button onclick="hapusPengirim(${item.id})" class="text-slate-300 hover:text-rose-500 p-1 font-bold">✕</button>
+    `;
+    c.appendChild(div);
+  });
+}
+
+function jadikanDefault(id) {
+  const list = getDaftarPengirim().map(p => ({ ...p, isDefault: p.id === id }));
   localStorage.setItem('ws_daftar_pengirim', JSON.stringify(list));
   inisialisasiPengirim();
   renderStruk();
 }
 
-function inisialisasiPengirim() {
-  const list = getDaftarPengirim();
-  const container = document.getElementById('listPengirim');
-  const selectAktif = document.getElementById('selectPengirimAktif');
-  
-  container.innerHTML = '';
-  selectAktif.innerHTML = '';
-
-  list.forEach(item => {
-    const card = document.createElement('div');
-    card.className = `p-3 rounded-2xl border flex items-center justify-between transition-all ${item.isDefault ? 'border-blue-500 bg-blue-50/50 shadow-sm' : 'border-slate-200 bg-slate-50/60'}`;
-    card.innerHTML = `
-      <div class="flex items-center gap-2.5 cursor-pointer flex-1" onclick="jadikanDefault(${item.id})">
-        <input type="radio" name="radioPengirim" ${item.isDefault ? 'checked' : ''} class="w-4 h-4 text-blue-600 focus:ring-0">
-        <div>
-          <div class="flex items-center gap-1.5">
-            <span class="font-extrabold text-slate-800 text-[11px]">${item.nama}</span>
-            ${item.isDefault ? '<span class="bg-blue-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md tracking-wider">DEFAULT</span>' : ''}
-          </div>
-          <div class="text-[10px] text-slate-400 font-mono font-medium">${item.bank} - ${item.rek}</div>
-        </div>
-      </div>
-      <button onclick="hapusPengirim(${item.id})" class="text-slate-300 hover:text-rose-500 p-1 text-sm font-bold transition-colors">✕</button>
-    `;
-    container.appendChild(card);
-
-    const option = document.createElement('option');
-    option.value = item.id;
-    option.innerText = `${item.bank} - ${item.nama} (${item.rek})`;
-    if (item.isDefault) option.selected = true;
-    selectAktif.appendChild(option);
-  });
-}
-
-function toggleFiturPengirim() {
-  const aktif = document.getElementById('togglePengirim').checked;
-  localStorage.setItem('ws_fitur_pengirim', aktif);
-  toggleContainerPengirim(aktif);
-  renderStruk();
-}
-
-function toggleContainerPengirim(aktif) {
-  const container = document.getElementById('selectPengirimAktif').parentElement;
-  if (aktif) container.classList.remove('hidden');
-  else container.classList.add('hidden');
-}
-
-function jadikanDefault(id) {
-  const list = getDaftarPengirim().map(item => ({ ...item, isDefault: item.id === id }));
-  saveDaftarPengirim(list);
-}
-
 function hapusPengirim(id) {
-  const list = getDaftarPengirim().filter(item => item.id !== id);
-  saveDaftarPengirim(list);
+  const list = getDaftarPengirim().filter(p => p.id !== id);
+  localStorage.setItem('ws_daftar_pengirim', JSON.stringify(list));
+  inisialisasiPengirim();
 }
 
-function bukaModalPengirim() {
-  document.getElementById('modalPengirim').classList.remove('hidden');
-}
-
-function tutupModalPengirim() {
-  document.getElementById('modalPengirim').classList.add('hidden');
-}
+function bukaModalPengirim() { document.getElementById('modalPengirim').classList.remove('hidden'); }
+function tutupModalPengirim() { document.getElementById('modalPengirim').classList.add('hidden'); }
 
 function simpanPengirimBaru() {
   const nama = document.getElementById('new_nama').value.trim();
   const bank = document.getElementById('new_bank').value.trim().toUpperCase();
   const rek = document.getElementById('new_rek').value.trim();
-
-  if (!nama || !bank || !rek) {
-    alert("Harap isi semua kolom!");
-    return;
-  }
+  if (!nama || !bank || !rek) return alert("Isi semua data!");
 
   const list = getDaftarPengirim();
   list.push({ id: Date.now(), nama, bank, rek, isDefault: list.length === 0 });
-  saveDaftarPengirim(list);
-
-  document.getElementById('new_nama').value = '';
-  document.getElementById('new_bank').value = '';
-  document.getElementById('new_rek').value = '';
+  localStorage.setItem('ws_daftar_pengirim', JSON.stringify(list));
+  inisialisasiPengirim();
   tutupModalPengirim();
 }
 
-// ==================== LOGO HANDLER ====================
+function muatPengaturan() {
+  if (localStorage.getItem('ws_nama')) document.getElementById('namaToko').value = localStorage.getItem('ws_nama');
+  if (localStorage.getItem('ws_admin')) document.getElementById('adminFee').value = localStorage.getItem('ws_admin');
+  if (localStorage.getItem('ws_cs')) document.getElementById('csNumber').value = localStorage.getItem('ws_cs');
+  if (localStorage.getItem('ws_logo')) {
+    document.getElementById('previewLogoBox').innerHTML = `<img src="${localStorage.getItem('ws_logo')}" class="max-h-12 object-contain filter grayscale">`;
+  }
+}
+
+function simpanPengaturan() {
+  localStorage.setItem('ws_nama', document.getElementById('namaToko').value);
+  localStorage.setItem('ws_admin', document.getElementById('adminFee').value);
+  localStorage.setItem('ws_cs', document.getElementById('csNumber').value);
+  dataAktifStruk.toko = document.getElementById('namaToko').value;
+  renderStruk();
+}
+
+function simpanPengaturanSukses() {
+  simpanPengaturan();
+  alert("Pengaturan Berhasil Disimpan!");
+  kembaliKeBeranda();
+}
+
 function prosesUploadLogo(event) {
   const file = event.target.files[0];
   if (!file) return;
-
   const reader = new FileReader();
-  reader.onload = function(e) {
-    const img = new Image();
-    img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 200;
-      const scaleSize = MAX_WIDTH / img.width;
-      canvas.width = MAX_WIDTH;
-      canvas.height = img.height * scaleSize;
-
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      localStorage.setItem('ws_logo', canvas.toDataURL('image/png'));
-      renderStruk();
-    };
-    img.src = e.target.result;
+  reader.onload = e => {
+    localStorage.setItem('ws_logo', e.target.result);
+    document.getElementById('previewLogoBox').innerHTML = `<img src="${e.target.result}" class="max-h-12 object-contain filter grayscale">`;
+    renderStruk();
   };
   reader.readAsDataURL(file);
 }
 
 function hapusLogo() {
   localStorage.removeItem('ws_logo');
-  document.getElementById('inputLogo').value = "";
+  document.getElementById('previewLogoBox').innerHTML = '<span class="text-3xl">⚡</span>';
   renderStruk();
 }
 
-function gantiTipeStruk() {
-  const tipe = document.getElementById('tipeStruk').value;
-  if (tipe === 'transfer') {
-    document.getElementById('formTransfer').classList.remove('hidden');
-    document.getElementById('formToken').classList.add('hidden');
-  } else {
-    document.getElementById('formTransfer').classList.add('hidden');
-    document.getElementById('formToken').classList.remove('hidden');
-  }
+function gantiTemaStruk(tema) {
+  currentTema = tema;
+  ['standard', 'minimalis', 'modern'].forEach(t => {
+    const btn = document.getElementById(`btnTema${t.charAt(0).toUpperCase() + t.slice(1)}`);
+    if (btn) btn.className = t === tema ? "bg-blue-600 text-white px-3.5 py-1.5 rounded-full shadow-sm" : "bg-white border text-slate-600 px-3.5 py-1.5 rounded-full shadow-sm";
+  });
   renderStruk();
 }
 
@@ -521,123 +448,10 @@ function getWaktuSekarang() {
   return { tgl: `${yyyy}-${mm}-${dd}`, jam: `${hh}:${ii}:${ss}`, lengkap: `${yyyy}-${mm}-${dd} ${hh}:${ii}:${ss}` };
 }
 
-// ==================== RENDER STRUK THERMAL ====================
-function renderStruk() {
-  const strukElement = document.getElementById('strukPreview');
-  if (!strukElement) return;
-
-  const tipe = document.getElementById('tipeStruk').value;
-  const toko = document.getElementById('namaToko') ? document.getElementById('namaToko').value : "WAHSTRUKNIH";
-  const cs = document.getElementById('csNumber') ? document.getElementById('csNumber').value : "0857-8024-3664";
-  const tid = document.getElementById('tidCode') ? document.getElementById('tidCode').value : "AD4ECF";
-  const logo = localStorage.getItem('ws_logo');
-  const waktu = getWaktuSekarang();
-  let html = '';
-
-  if (logo) {
-    html += `<div class="flex justify-center mb-1"><img src="${logo}" class="max-h-12 object-contain filter grayscale contrast-200"></div>`;
-  } else {
-    html += `<div class="text-center font-bold text-xl mb-1">⚡</div>`;
-  }
-  html += `<div class="text-center font-bold text-xs tracking-widest mb-2">${toko}</div>`;
-
-  if (tipe === 'transfer') {
-    const bank = document.getElementById('trf_bank').value || "-";
-    const rek = document.getElementById('trf_rek').value || "-";
-    const penerima = document.getElementById('trf_penerima').value || "-";
-    const nominal = parseInt(document.getElementById('trf_nominal').value) || 0;
-    const admin = parseInt(document.getElementById('trf_admin').value) || 0;
-    const ref = document.getElementById('trf_ref').value || "-";
-    const total = nominal + admin;
-
-    const fiturPengirimAktif = document.getElementById('togglePengirim') ? document.getElementById('togglePengirim').checked : true;
-    const listPengirim = getDaftarPengirim();
-    const selectVal = document.getElementById('selectPengirimAktif') ? document.getElementById('selectPengirimAktif').value : null;
-    const pengirimAktif = listPengirim.find(p => p.id == selectVal) || listPengirim[0] || { nama: "KONTER", bank: "BANK", rek: "xxxx" };
-
-    html += `
-      <div class="my-1 text-center">================================</div>
-      <div class="flex justify-between"><span>TANGGAL</span><span>${waktu.tgl}</span></div>
-      <div class="flex justify-between"><span>WAKTU</span><span>${waktu.jam}</span></div>
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="text-center font-bold">KODE REFERENSI</div>
-      <div class="text-center mb-1 font-mono">${ref}</div>
-    `;
-
-    if (fiturPengirimAktif) {
-      html += `
-        <div class="my-1 text-center">--------------------------------</div>
-        <div class="text-center font-bold mb-1">DATA PENGIRIM</div>
-        <div class="flex justify-between"><span>NAMA</span><span>${pengirimAktif.nama}</span></div>
-        <div class="flex justify-between"><span>BANK</span><span>${pengirimAktif.bank}</span></div>
-        <div class="flex justify-between"><span>NO REKENING</span><span class="font-mono">${pengirimAktif.rek}</span></div>
-      `;
-    }
-
-    html += `
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="text-center font-bold mb-1">DATA PENERIMA</div>
-      <div class="flex justify-between"><span>BANK TUJUAN</span><span>${bank}</span></div>
-      <div class="flex justify-between"><span>NO REKENING</span><span class="font-mono">${rek}</span></div>
-      <div class="flex justify-between"><span>PENERIMA</span><span class="font-bold text-right">${penerima}</span></div>
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="flex justify-between"><span>NOMINAL</span><span>RP ${nominal.toLocaleString('id-ID')}</span></div>
-      <div class="flex justify-between"><span>ADMIN</span><span>RP ${admin.toLocaleString('id-ID')}</span></div>
-      <div class="my-1 text-center">================================</div>
-      <div class="flex justify-between font-bold text-xs"><span>TOTAL</span><span>RP ${total.toLocaleString('id-ID')}</span></div>
-      <div class="my-1 text-center">================================</div>
-    `;
-  } else {
-    // STRUK TOKEN PLN LENGKAP
-    const token = document.getElementById('pln_token').value || "-";
-    const nama = document.getElementById('pln_nama').value || "-";
-    const meter = document.getElementById('pln_meter').value || "-";
-    const kwh = document.getElementById('pln_kwh').value || "-";
-    const total = parseInt(document.getElementById('pln_total').value) || 0;
-    const refPln = localStorage.getItem('ws_pln_ref') || "1462747568";
-
-    const tokenParts = token.split(' ');
-    const baris1 = tokenParts.slice(0, 3).join(' ') || token.substring(0, 14);
-    const baris2 = tokenParts.slice(3).join(' ') || token.substring(14);
-
-    html += `
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="text-center font-bold">TOKEN LISTRIK PRABAYAR</div>
-      <div class="text-center text-[10px]">${waktu.lengkap}</div>
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="text-center font-bold text-sm tracking-wider my-2 font-mono">
-        <div>${baris1}</div>
-        <div>${baris2}</div>
-      </div>
-      <div class="text-center text-[10px] mb-2 font-bold">MASUKKAN 20 ANGKA DI METERAN</div>
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="flex justify-between"><span>NO METER :</span><span class="font-mono">${meter}</span></div>
-      <div class="flex justify-between"><span>NAMA     :</span><span class="font-bold">${nama}</span></div>
-      <div class="flex justify-between"><span>KWH      :</span><span>${kwh}</span></div>
-      <div class="my-1 text-center">--------------------------------</div>
-      <div class="flex justify-between font-bold"><span>TOTAL</span><span>RP ${total.toLocaleString('id-ID')}</span></div>
-      <div class="flex justify-between text-[10px]"><span>REF:</span><span class="font-mono">${refPln}</span></div>
-    `;
-  }
-
-  html += `
-    <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
-    <div class="text-center text-[10px]">TERIMA KASIH ATAS</div>
-    <div class="text-center text-[10px] font-bold">KEPERCAYAAN ANDA</div>
-    <div class="my-1 text-center">--------------------------------</div>
-    <div class="text-center text-[10px]">CS / BANTUAN:</div>
-    <div class="text-center text-[11px] font-bold font-mono">${cs}</div>
-    <div class="text-center text-[10px] mt-1">SIMPAN STRUK INI SEBAGAI BUKTI SAH</div>
-    <div class="text-center text-[10px] mt-0.5 font-mono">TID: ${tid}</div>
-  `;
-
-  strukElement.innerHTML = html;
-}
-
-// ==================== SISTEM RIWAYAT TRANSAKSI ====================
+// ==================== RIWAYAT TRANSAKSI (AKTIVITAS) ====================
 function getRiwayat() {
-  const data = localStorage.getItem('ws_riwayat');
-  return data ? JSON.parse(data) : [];
+  const d = localStorage.getItem('ws_riwayat');
+  return d ? JSON.parse(d) : [];
 }
 
 function simpanKeRiwayat(item) {
@@ -645,109 +459,72 @@ function simpanKeRiwayat(item) {
   list.unshift(item);
   if (list.length > 50) list.pop();
   localStorage.setItem('ws_riwayat', JSON.stringify(list));
+  renderRiwayatSemua();
 }
 
-function renderRiwayat() {
-  const container = document.getElementById('containerListRiwayat');
-  const summaryTrx = document.getElementById('summaryJumlahTrx');
-  const summaryNominal = document.getElementById('summaryTotalNominal');
-  if (!container) return;
-
+function renderRiwayatSemua() {
   const list = getRiwayat();
-  summaryTrx.innerText = `${list.length} Transaksi`;
+  const cBeranda = document.getElementById('listRiwayatBeranda');
+  const cLengkap = document.getElementById('containerAktivitasLengkap');
 
-  let totalUang = 0;
-
-  if (list.length === 0) {
-    container.innerHTML = `
-      <div class="bg-white p-8 rounded-2xl border border-slate-200/80 text-center text-slate-400 text-xs">
-        <span class="text-2xl block mb-1">📭</span>
-        Belum ada riwayat transaksi yang dicetak.
-      </div>
-    `;
-    summaryNominal.innerText = "Rp 0";
-    return;
+  if (cBeranda) {
+    cBeranda.innerHTML = '';
+    list.slice(0, 3).forEach(item => {
+      const card = document.createElement('div');
+      card.className = "bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between";
+      card.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-black text-blue-600 text-sm">
+            ${item.judul.charAt(0)}
+          </div>
+          <div>
+            <div class="font-extrabold text-xs text-slate-900">${item.judul}</div>
+            <div class="text-[10px] text-slate-400 font-mono">${item.waktu}</div>
+          </div>
+        </div>
+      `;
+      cBeranda.appendChild(card);
+    });
   }
 
-  container.innerHTML = '';
-  list.forEach(item => {
-    totalUang += item.total;
-    const card = document.createElement('div');
-    card.className = "bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-2";
-    
-    card.innerHTML = `
-      <div class="flex justify-between items-start">
-        <span class="text-[9px] font-black px-2 py-0.5 rounded-md ${item.tipe === 'transfer' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800'} uppercase tracking-wider">
-          ${item.tipe}
-        </span>
-        <span class="text-[10px] text-slate-400 font-mono font-medium">${item.waktu}</span>
-      </div>
-      <div class="flex justify-between items-center">
-        <div>
-          <div class="font-bold text-slate-800 text-xs">${item.judul}</div>
-          <div class="text-[10px] text-slate-400 font-mono">Ref: ${item.ref}</div>
+  if (cLengkap) {
+    cLengkap.innerHTML = '';
+    list.forEach(item => {
+      const card = document.createElement('div');
+      card.className = "bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between";
+      card.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-sm">
+            ${item.judul.charAt(0)}
+          </div>
+          <div>
+            <div class="font-extrabold text-xs text-slate-900">${item.judul}</div>
+            <div class="text-[10px] text-slate-400 font-mono">${item.waktu} • <span class="text-emerald-600 font-bold">Rp ${item.total.toLocaleString('id-ID')}</span></div>
+          </div>
         </div>
-        <div class="text-right">
-          <div class="font-black text-slate-900 text-xs">Rp ${item.total.toLocaleString('id-ID')}</div>
-          <div class="text-[9px] text-emerald-600 font-bold">+Admin Rp ${item.admin.toLocaleString('id-ID')}</div>
-        </div>
-      </div>
-      <div class="pt-2 border-t border-slate-100 flex justify-end gap-2">
-        <button onclick="hapusSatuRiwayat(${item.id})" class="text-[10px] text-rose-500 font-bold px-2 py-1 hover:bg-rose-50 rounded-lg">Hapus</button>
-        <button onclick="muatUlangStruk(${item.id})" class="text-[10px] bg-slate-900 active:scale-95 text-white font-bold px-3 py-1 rounded-lg shadow-sm">Cetak Ulang</button>
-      </div>
-    `;
-    container.appendChild(card);
-  });
-
-  summaryNominal.innerText = `Rp ${totalUang.toLocaleString('id-ID')}`;
+        <button onclick="hapusSatuRiwayat(${item.id})" class="text-slate-300 hover:text-rose-500 p-2 text-sm">🗑️</button>
+      `;
+      cLengkap.appendChild(card);
+    });
+  }
 }
 
 function hapusSatuRiwayat(id) {
-  let list = getRiwayat().filter(item => item.id !== id);
+  const list = getRiwayat().filter(r => r.id !== id);
   localStorage.setItem('ws_riwayat', JSON.stringify(list));
-  renderRiwayat();
+  renderRiwayatSemua();
 }
 
 function hapusSemuaRiwayat() {
-  if (confirm("Hapus semua catatan riwayat transaksi?")) {
+  if (confirm("Hapus semua catatan riwayat?")) {
     localStorage.removeItem('ws_riwayat');
-    renderRiwayat();
+    renderRiwayatSemua();
   }
 }
 
-function muatUlangStruk(id) {
-  const item = getRiwayat().find(r => r.id === id);
-  if (!item) return;
-
-  document.getElementById('tipeStruk').value = item.tipe;
-  gantiTipeStruk();
-
-  if (item.tipe === 'transfer') {
-    document.getElementById('trf_bank').value = item.data.bank;
-    document.getElementById('trf_rek').value = item.data.rek;
-    document.getElementById('trf_penerima').value = item.data.penerima;
-    document.getElementById('trf_nominal').value = item.data.nominal;
-    document.getElementById('trf_admin').value = item.admin;
-    document.getElementById('trf_ref').value = item.ref;
-  } else {
-    document.getElementById('pln_token').value = item.data.token;
-    document.getElementById('pln_nama').value = item.data.nama;
-    document.getElementById('pln_meter').value = item.data.meter;
-    document.getElementById('pln_kwh').value = item.data.kwh;
-    document.getElementById('pln_total').value = item.total;
-  }
-
-  pindahTab('cetak');
-  renderStruk();
-}
-
-// ==================== KONEKSI BLUETOOTH & PRINT ====================
+// ==================== KONEKSI BLUETOOTH PRINTER ====================
 async function hubungkanPrinter() {
   try {
-    document.getElementById('statusPrinter').innerText = "Mencari Printer...";
-    document.getElementById('dotPrinter').className = "w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse";
-
     const device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: BLE_SERVICES
@@ -762,145 +539,96 @@ async function hubungkanPrinter() {
       } catch (e) {}
     }
 
-    if (!service) throw new Error("Service printer tidak ditemukan");
-
     const characteristics = await service.getCharacteristics();
     printerCharacteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
 
     if (printerCharacteristic) {
-      document.getElementById('statusPrinter').innerText = device.name || 'Printer Terhubung';
-      document.getElementById('dotPrinter').className = "w-2.5 h-2.5 rounded-full bg-emerald-500";
+      document.getElementById('namaPrinterKonek').innerText = device.name || 'Printer Terhubung';
+      document.getElementById('indikatorPrinterStatus').innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="text-emerald-600">Terhubung</span>';
+      document.getElementById('btnCetakAksi').innerHTML = '<span>🖨️</span><span>CETAK STRUK</span>';
+      document.getElementById('btnCetakAksi').className = "flex-1 h-12 bg-slate-900 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg";
+      alert("Printer Berhasil Terkoneksi!");
     }
   } catch (err) {
-    alert("Gagal konek Bluetooth: " + err.message);
-    document.getElementById('statusPrinter').innerText = "Belum Konek Printer";
-    document.getElementById('dotPrinter').className = "w-2.5 h-2.5 rounded-full bg-rose-500";
+    alert("Koneksi Bluetooth: " + err.message);
   }
 }
 
-function formatBaris(kiri, kanan, lebar = 32) {
-  const sisaSpasi = lebar - (kiri.length + kanan.length);
-  if (sisaSpasi < 1) return kiri + " " + kanan + "\n";
-  return kiri + " ".repeat(sisaSpasi) + kanan + "\n";
-}
-
-function rataTengah(teks, lebar = 32) {
-  const spasi = Math.max(0, Math.floor((lebar - teks.length) / 2));
-  return " ".repeat(spasi) + teks + "\n";
-}
-
-// CETAK STRUK LANGSUNG KE BLUETOOTH
+// ==================== CETAK STRUK LANGSUNG ====================
 async function cetakLangsung() {
   if (!printerCharacteristic) {
-    alert("Hubungkan printer Bluetooth dulu lewat tombol 'Sambung'!");
+    hubungkanPrinter();
     return;
   }
 
-  const tipe = document.getElementById('tipeStruk').value;
-  const toko = document.getElementById('namaToko') ? document.getElementById('namaToko').value : "WAHSTRUKNIH";
-  const cs = document.getElementById('csNumber') ? document.getElementById('csNumber').value : "0857-8024-3664";
-  const tid = document.getElementById('tidCode') ? document.getElementById('tidCode').value : "AD4ECF";
   const waktu = getWaktuSekarang();
-
+  const pengirimAktif = getPengirimAktif();
+  const cs = localStorage.getItem('ws_cs') || "0857-8024-3664";
   const ESC = "\x1B";
   const GS = "\x1D";
   let printData = ESC + "@";
-  printData += rataTengah(toko);
 
-  if (tipe === 'transfer') {
-    const bank = document.getElementById('trf_bank').value;
-    const rek = document.getElementById('trf_rek').value;
-    const penerima = document.getElementById('trf_penerima').value;
-    const nominal = parseInt(document.getElementById('trf_nominal').value) || 0;
-    const admin = parseInt(document.getElementById('trf_admin').value) || 0;
-    const ref = document.getElementById('trf_ref').value;
-    const total = nominal + admin;
+  printData += rataTengah(dataAktifStruk.toko || "SakaPay");
 
-    const fiturPengirimAktif = document.getElementById('togglePengirim') ? document.getElementById('togglePengirim').checked : true;
-    const listPengirim = getDaftarPengirim();
-    const selectVal = document.getElementById('selectPengirimAktif').value;
-    const pengirimAktif = listPengirim.find(p => p.id == selectVal) || listPengirim[0] || { nama: "-", bank: "-", rek: "-" };
-
+  if (dataAktifStruk.tipe === 'transfer') {
+    const total = dataAktifStruk.nominal + dataAktifStruk.admin;
     printData += rataTengah("================================");
-    printData += formatBaris("TANGGAL", waktu.tgl);
-    printData += formatBaris("WAKTU", waktu.jam);
+    printData += formatBaris("TANGGAL", dataAktifStruk.waktuTgl || waktu.tgl);
+    printData += formatBaris("WAKTU", dataAktifStruk.waktuJam || waktu.jam);
     printData += rataTengah("--------------------------------");
     printData += rataTengah("KODE REFERENSI");
-    printData += rataTengah(ref);
-
-    if (fiturPengirimAktif) {
-      printData += rataTengah("--------------------------------");
-      printData += rataTengah("DATA PENGIRIM");
-      printData += formatBaris("NAMA", pengirimAktif.nama);
-      printData += formatBaris("BANK", pengirimAktif.bank);
-      printData += formatBaris("NO REKENING", pengirimAktif.rek);
-    }
-
+    printData += rataTengah(dataAktifStruk.ref);
+    printData += rataTengah("--------------------------------");
+    printData += rataTengah("DATA PENGIRIM");
+    printData += formatBaris("NAMA", pengirimAktif.nama);
+    printData += formatBaris("BANK", pengirimAktif.bank);
+    printData += formatBaris("NO REKENING", pengirimAktif.rek);
     printData += rataTengah("--------------------------------");
     printData += rataTengah("DATA PENERIMA");
-    printData += formatBaris("BANK TUJUAN", bank);
-    printData += formatBaris("NO REKENING", rek);
-    printData += formatBaris("PENERIMA", penerima);
+    printData += formatBaris("BANK TUJUAN", dataAktifStruk.bankTujuan);
+    printData += formatBaris("NO REKENING", dataAktifStruk.rekTujuan);
+    printData += formatBaris("PENERIMA", dataAktifStruk.namaPenerima);
     printData += rataTengah("--------------------------------");
-    printData += formatBaris("NOMINAL", `RP ${nominal.toLocaleString('id-ID')}`);
-    printData += formatBaris("ADMIN", `RP ${admin.toLocaleString('id-ID')}`);
+    printData += formatBaris("NOMINAL", `RP ${dataAktifStruk.nominal.toLocaleString('id-ID')}`);
+    printData += formatBaris("ADMIN", `RP ${dataAktifStruk.admin.toLocaleString('id-ID')}`);
     printData += rataTengah("================================");
     printData += formatBaris("TOTAL", `RP ${total.toLocaleString('id-ID')}`);
     printData += rataTengah("================================");
 
     simpanKeRiwayat({
       id: Date.now(),
-      tipe: 'transfer',
-      judul: `${bank} - ${penerima}`,
-      waktu: waktu.lengkap,
-      nominal: nominal,
-      admin: admin,
-      total: total,
-      ref: ref,
-      data: { bank, rek, penerima, nominal }
+      judul: dataAktifStruk.namaPenerima,
+      waktu: `${dataAktifStruk.waktuTgl} ${dataAktifStruk.waktuJam}`,
+      total: total
     });
-
   } else {
-    const token = document.getElementById('pln_token').value;
-    const nama = document.getElementById('pln_nama').value;
-    const meter = document.getElementById('pln_meter').value;
-    const kwh = document.getElementById('pln_kwh').value;
-    const total = parseInt(document.getElementById('pln_total').value) || 0;
-    const refPln = localStorage.getItem('ws_pln_ref') || "1462747568";
-
-    const tokenParts = token.split(' ');
-    const baris1 = tokenParts.slice(0, 3).join(' ') || token.substring(0, 14);
-    const baris2 = tokenParts.slice(3).join(' ') || token.substring(14);
+    // Cetak Token PLN
+    const tokenParts = dataAktifStruk.tokenNumber.split(' ');
+    const b1 = tokenParts.slice(0, 3).join(' ') || dataAktifStruk.tokenNumber.substring(0, 14);
+    const b2 = tokenParts.slice(3).join(' ') || dataAktifStruk.tokenNumber.substring(14);
 
     printData += rataTengah("--------------------------------");
     printData += rataTengah("TOKEN LISTRIK PRABAYAR");
     printData += rataTengah(waktu.lengkap);
     printData += rataTengah("--------------------------------\n");
-
     printData += GS + "!" + "\x11";
-    printData += rataTengah(baris1, 16);
-    printData += rataTengah(baris2, 16);
+    printData += rataTengah(b1, 16);
+    printData += rataTengah(b2, 16);
     printData += GS + "!" + "\x00";
-
     printData += "\n" + rataTengah("MASUKKAN 20 ANGKA DI METERAN");
     printData += rataTengah("--------------------------------");
-    printData += formatBaris("NO METER :", meter);
-    printData += formatBaris("NAMA     :", nama);
-    printData += formatBaris("KWH      :", kwh);
+    printData += formatBaris("NO METER :", dataAktifStruk.plnMeter);
+    printData += formatBaris("NAMA     :", dataAktifStruk.plnNama);
+    printData += formatBaris("KWH      :", dataAktifStruk.plnKwh);
     printData += rataTengah("--------------------------------");
-    printData += formatBaris("TOTAL", `RP ${total.toLocaleString('id-ID')}`);
-    printData += formatBaris("REF:", refPln);
+    printData += formatBaris("TOTAL", `RP ${dataAktifStruk.plnTotal.toLocaleString('id-ID')}`);
+    printData += formatBaris("REF:", dataAktifStruk.plnRef);
 
     simpanKeRiwayat({
       id: Date.now(),
-      tipe: 'token',
-      judul: `PLN - ${nama} (${meter})`,
+      judul: dataAktifStruk.plnNama,
       waktu: waktu.lengkap,
-      nominal: total,
-      admin: 0,
-      total: total,
-      ref: refPln,
-      data: { token, nama, meter, kwh }
+      total: dataAktifStruk.plnTotal
     });
   }
 
@@ -910,22 +638,35 @@ async function cetakLangsung() {
   printData += rataTengah("KEPERCAYAAN ANDA");
   printData += rataTengah("--------------------------------");
   printData += rataTengah(`CS / BANTUAN: ${cs}`);
-  printData += rataTengah("SIMPAN STRUK INI SEBAGAI");
-  printData += rataTengah("BUKTI TRANSAKSI YANG SAH");
-  printData += rataTengah(`TID: ${tid}`);
+  printData += rataTengah("SIMPAN STRUK INI SEBAGAI BUKTI SAH");
   printData += "\n\n\n";
 
-  await kirimBytesKePrinter(printData);
-}
-
-async function kirimBytesKePrinter(str) {
   const encoder = new TextEncoder();
-  const bytes = encoder.encode(str);
-  const CHUNK_SIZE = 50;
-
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.slice(i, i + CHUNK_SIZE);
-    await printerCharacteristic.writeValue(chunk);
+  const bytes = encoder.encode(printData);
+  for (let i = 0; i < bytes.length; i += 50) {
+    await printerCharacteristic.writeValue(bytes.slice(i, i + 50));
     await new Promise(r => setTimeout(r, 20));
   }
+}
+
+function bagikanStruk() {
+  if (navigator.share) {
+    navigator.share({
+      title: 'Struk Transaksi',
+      text: `Bukti Transaksi ${dataAktifStruk.toko}\nTotal: Rp ${(dataAktifStruk.nominal + dataAktifStruk.admin).toLocaleString('id-ID')}\nRef: ${dataAktifStruk.ref}`
+    });
+  } else {
+    alert("Fitur bagikan siap digunakan!");
+  }
+}
+
+function formatBaris(kiri, kanan, lebar = 32) {
+  const sisa = lebar - (kiri.length + kanan.length);
+  if (sisa < 1) return kiri + " " + kanan + "\n";
+  return kiri + " ".repeat(sisa) + kanan + "\n";
+}
+
+function rataTengah(teks, lebar = 32) {
+  const spasi = Math.max(0, Math.floor((lebar - teks.length) / 2));
+  return " ".repeat(spasi) + teks + "\n";
 }
