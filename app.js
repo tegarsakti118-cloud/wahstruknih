@@ -6,7 +6,6 @@ if ('serviceWorker' in navigator) {
 let printerCharacteristic = null;
 let currentTema = 'standard';
 
-// DATA AWAL BERSIH (TANPA DATA GHOST DUMMY)
 let dataAktifStruk = {
   tipe: 'token',
   toko: 'SakaPay',
@@ -67,7 +66,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ==================== NAVIGASI TAB ====================
 function pindahTab(tab) {
   ['beranda', 'printer', 'setelan', 'aktivitas', 'preview'].forEach(v => {
     const el = document.getElementById(`view-${v}`);
@@ -91,7 +89,6 @@ function pindahTab(tab) {
 function kembaliKeBeranda() { pindahTab('beranda'); }
 function bukaPreview() { pindahTab('preview'); renderStruk(); }
 
-// ==================== PROSES OCR SCAN ====================
 async function bacaGambarManual(event, tipe) {
   const file = event.target.files[0];
   if (!file) return;
@@ -101,15 +98,20 @@ async function bacaGambarManual(event, tipe) {
 }
 
 async function scanGambarOcr(imageBlob) {
+  const loading = document.getElementById('loadingOcr');
+  if (loading) loading.classList.remove('hidden');
   try {
     const result = await Tesseract.recognize(imageBlob, 'eng', { logger: () => {} });
     parseOcrTextMaster(result.data.text);
   } catch (err) {
     alert("Gagal membaca bukti: " + err.message);
+  } finally {
+    if (loading) loading.classList.add('hidden');
+    renderStruk();
   }
 }
 
-// ==================== PARSER SAKTI BERBASIS BARIS & TITIK DUA ====================
+// ==================== PARSER MASTER LENGKAP & ANTI-GAGAL ====================
 function parseOcrTextMaster(rawText) {
   if (!rawText) return;
 
@@ -118,64 +120,66 @@ function parseOcrTextMaster(rawText) {
   const oneLine = cleanText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
 
   // ==========================================
-  // 1. FORMAT STRUK TOKEN LISTRIK PLN (PERSIS STRUK MINGAN)
+  // 1. FORMAT STRUK TOKEN LISTRIK (PERSIS STRUK MINGAN)
   // ==========================================
-  if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA/i.test(oneLine)) {
+  if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA|MCB\s*PEMILIK/i.test(oneLine)) {
     dataAktifStruk.tipe = 'token';
 
     // A. 20 Digit Angka Token (Contoh: 0857-6239-5611-2486-5490)
     const tkn = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
     if (tkn) dataAktifStruk.tokenNumber = tkn[1].replace(/-/g, ' ');
 
-    // B. Parser Berbasis Titik Dua (:) untuk Struk PLN
+    // B. Baca Baris per Baris (Bekerja 100% pada Struk MINGAN)
     for (const line of lines) {
-      if (line.includes(':')) {
-        const parts = line.split(':');
-        const key = parts[0].trim().toUpperCase();
-        const val = parts.slice(1).join(':').trim();
-
-        // ID PLN / No Meter (Contoh: 14342562940)
-        if (/ID\s*(PLN|PEL|PIN)|METER/i.test(key)) {
-          const num = val.match(/\d{10,13}/);
-          if (num) dataAktifStruk.plnMeter = num[0];
+      // 1. Nama Pelanggan (Contoh: "NAMA : MINGAN")
+      if (/^NAMA/i.test(line)) {
+        const n = line.replace(/^NAMA[\s:;.-]*/i, '').trim().toUpperCase();
+        if (n.length >= 2 && !/TOKO|AGEN|PENGIRIM/i.test(n)) {
+          dataAktifStruk.plnNama = n;
         }
-        // Nama Pelanggan (Contoh: MINGAN)
-        else if (/NAMA/i.test(key) && !/TOKO|AGEN/i.test(key)) {
-          const cleanNama = val.replace(/[^A-Za-z\s.'’]/g, '').trim().toUpperCase();
-          if (cleanNama.length >= 2) dataAktifStruk.plnNama = cleanNama;
+      }
+      // 2. ID PLN / No Meter (Contoh: "ID PLN : 14342562940")
+      else if (/^ID\s*(PLN|PEL|PIN)|METER/i.test(line)) {
+        const m = line.match(/\d{10,13}/);
+        if (m) dataAktifStruk.plnMeter = m[0];
+      }
+      // 3. ID TRX / Ref (Contoh: "ID TRX : 1463753171")
+      else if (/^ID\s*TRX|^TRX|^NO\.?\s*REF/i.test(line)) {
+        const r = line.match(/\d{8,18}/);
+        if (r) dataAktifStruk.plnRef = r[0];
+      }
+      // 4. Jumlah Daya / KWH (Contoh: "JUMLAH DAYA : 13.50 KWH")
+      else if (/DAYA|KWH/i.test(line)) {
+        const kMatch = line.match(/([0-9.,]+\s*KWH)/i) || line.match(/([0-9]+[.,][0-9]{1,2})/);
+        if (kMatch && !dataAktifStruk.plnKwh) {
+          let k = kMatch[1].toUpperCase();
+          if (!k.includes('KWH')) k += ' KWH';
+          dataAktifStruk.plnKwh = k;
         }
-        // Jumlah KWH (Contoh: 13.50 KWH)
-        else if (/DAYA|KWH/i.test(key)) {
-          const kMatch = val.match(/([0-9.,]+\s*KWH)/i) || val.match(/([0-9.,]+)/);
-          if (kMatch && !dataAktifStruk.plnKwh) {
-            let k = kMatch[1].toUpperCase();
-            if (!k.includes('KWH')) k += ' KWH';
-            dataAktifStruk.plnKwh = k;
-          }
-        }
-        // Harga / Total (Contoh: Rp 25.000)
-        else if (/HARGA|TOTAL|TAGIHAN/i.test(key)) {
-          const h = val.match(/[\d.,]+/);
-          if (h) dataAktifStruk.plnTotal = parseInt(h[0].replace(/[^0-9]/g, ''));
-        }
-        // ID TRX / Ref (Contoh: 1463753171)
-        else if (/ID\s*TRX|NO\.?\s*REF/i.test(key)) {
-          const r = val.match(/\d{8,16}/);
-          if (r) dataAktifStruk.plnRef = r[0];
+      }
+      // 5. Total Harga (Contoh: "HARGA : Rp 25.000")
+      else if (/^HARGA|^TOTAL|^TAGIHAN/i.test(line)) {
+        const h = line.match(/[\d.,]+/);
+        if (h) {
+          const val = parseInt(h[0].replace(/[^0-9]/g, ''));
+          if (val >= 1000) dataAktifStruk.plnTotal = val;
         }
       }
     }
 
-    // Fallback jika No Meter belum tertangkap
-    if (!dataAktifStruk.plnMeter) {
-      const any11 = oneLine.match(/\b\d{11,12}\b/g) || [];
-      if (any11.length > 0) dataAktifStruk.plnMeter = any11[0];
+    // Fallback Harga jika belum ketemu
+    if (!dataAktifStruk.plnTotal) {
+      const hrgAlt = oneLine.match(/(?:HARGA|TOTAL)[\s:;.-]*Rp?\s*([\d.,]+)/i) || oneLine.match(/Rp\s*([\d.,]+)/i);
+      if (hrgAlt) {
+        const v = parseInt(hrgAlt[1].replace(/[^0-9]/g, ''));
+        if (v >= 1000) dataAktifStruk.plnTotal = v;
+      }
     }
     return;
   }
 
   // ==========================================
-  // 2. FORMAT TRANSFER (DANA, SEABANK, QITA BRI)
+  // 2. FORMAT TRANSFER BANK & E-WALLET
   // ==========================================
   dataAktifStruk.tipe = 'transfer';
 
@@ -183,25 +187,34 @@ function parseOcrTextMaster(rawText) {
   const nom = oneLine.match(/Rp\s*([\d.,]+)/i);
   if (nom) dataAktifStruk.nominal = parseInt(nom[1].replace(/[^0-9]/g, ''));
 
-  // A. Format DANA
+  // --- A. FORMAT DANA (BILINGUAL ENGLISH/INDO) ---
   if (/DANA|Send\s*Money|Receiver\s*Detail/i.test(oneLine)) {
-    const danaSum = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-–]\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|[A-Za-z]+)\s*(?:[•*.\s\d]*(\d{4}))/i);
+    const danaSum = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-–]\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|[A-Za-z]+)/i);
     if (danaSum) {
-      dataAktifStruk.namaPenerima = danaNamaClean(danaSum[1]);
+      dataAktifStruk.namaPenerima = danaSum[1].replace(/^(KIRIM\s*UANG|UANG|TRANSFER|TO|KE)\s*/gi, '').trim().toUpperCase();
       dataAktifStruk.bankTujuan = danaSum[2].trim().toUpperCase();
-      dataAktifStruk.rekTujuan = "••••" + danaSum[3];
     }
 
-    if (!dataAktifStruk.rekTujuan) {
-      const danaMasked = oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/);
-      if (danaMasked) dataAktifStruk.rekTujuan = "••••" + danaMasked[1].replace(/\s/g, '');
+    if (!dataAktifStruk.namaPenerima) {
+      const nameDetail = oneLine.match(/(?:Receiver\s*Detail|Detail\s*Penerima).*?(?:Name|Nama)[\s:]*([A-Za-z\s.'’]{3,35})\s+(?:Bank|Akun|Nominal|Total)/i);
+      if (nameDetail) dataAktifStruk.namaPenerima = nameDetail[1].trim().toUpperCase();
+    }
+
+    // Nomor Rekening DANA (Menangkap 4 digit bertitik atau 4 digit di belakang nama bank)
+    const danaMasked = oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/) || oneLine.match(/(?:Seabank|BRI|BCA|Mandiri|BNI|Bank)[A-Za-z\s]*?[•*.\s-_]*?(\d{2,4}\s*\d{2,4})\b/i);
+    if (danaMasked) {
+      const d = danaMasked[1].replace(/\s/g, '');
+      dataAktifStruk.rekTujuan = "••••" + d.slice(-4);
+    } else {
+      const danaPhone = oneLine.match(/\b(08[0-9•*.-]{8,15})\b/);
+      if (danaPhone) dataAktifStruk.rekTujuan = danaPhone[1].replace(/\s/g, '');
     }
 
     const txId = oneLine.match(/External\s*Serial\s*Number\s*([0-9\s]{10,25})/i) || oneLine.match(/Transaction\s*ID\s*([0-9\s]{15,40})/i);
     if (txId) dataAktifStruk.ref = txId[1].replace(/\s/g, '').substring(0, 20);
   }
 
-  // B. Format Qita BRI
+  // --- B. FORMAT QITA BRI ---
   else if (/Qita|Transfer\s*Bank\s*BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("Referensi"))) {
     dataAktifStruk.bankTujuan = "BRI";
     const refBri = oneLine.match(/No\.?\s*Referensi[\s:]*([0-9]{10,16})/i) || oneLine.match(/\b\d{12}\b/);
@@ -214,7 +227,7 @@ function parseOcrTextMaster(rawText) {
     }
   }
 
-  // C. Format SeaBank
+  // --- C. FORMAT SEABANK ---
   else if (/SeaBank|Pembayaran\s*Diterima|Hasil\s*Transfer/i.test(oneLine)) {
     const seaKe = oneLine.match(/Ke\s+([A-Za-z\s.'’]{3,30})\s+([A-Z]{3,10})[\s:]+([0-9]{9,20})/i);
     if (seaKe) {
@@ -227,11 +240,7 @@ function parseOcrTextMaster(rawText) {
   }
 }
 
-function danaNamaClean(t) {
-  return t.replace(/^(KIRIM\s*UANG|UANG|TRANSFER|TO|KE)\s*/gi, '').trim().toUpperCase();
-}
-
-// ==================== RENDER PREVIEW STRUK THERMAL (ANTI KEPOTONG) ====================
+// ==================== RENDER PREVIEW STRUK THERMAL ====================
 function renderStruk() {
   const container = document.getElementById('strukPrintArea');
   if (!container) return;
@@ -242,7 +251,6 @@ function renderStruk() {
   const waktu = getWaktuSekarang();
   let html = '';
 
-  // HEADER LOGO
   if (logo) {
     html += `<div class="flex justify-center mb-1"><img src="${logo}" class="max-h-12 object-contain filter grayscale contrast-200"></div>`;
   } else {
@@ -278,7 +286,7 @@ function renderStruk() {
       <div class="my-1 text-center">================================</div>
     `;
   } else {
-    // Struk Token PLN
+    // STRUK TOKEN PLN
     const tkn = dataAktifStruk.tokenNumber || "0000 0000 0000 0000 0000";
     const tokenParts = tkn.split(' ');
     const b1 = tokenParts.slice(0, 3).join(' ') || tkn.substring(0, 14);
@@ -304,7 +312,7 @@ function renderStruk() {
     `;
   }
 
-  // FOOTER SUDAH DIPISAH JADI 2 BARIS PENDEK (ANTI KEPOTONG 'AH')
+  // FOOTER SUDAH DIPISAH RAPI JADI 2 BARIS (ANTI-TERPOTONG 'AH')
   const cs = localStorage.getItem('ws_cs') || "0857-8024-3664";
   html += `
     <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
@@ -597,6 +605,8 @@ async function hubungkanPrinter() {
       } catch (e) {}
     }
 
+    if (!service) throw new Error("Service printer tidak ditemukan");
+
     const characteristics = await service.getCharacteristics();
     printerCharacteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
 
@@ -691,7 +701,7 @@ async function cetakLangsung() {
     });
   }
 
-  // FOOTER SUDAH DIPISAH JADI 2 BARIS PENDEK (TIDAK AKAN KEPOTONG 'AH')
+  // FOOTER SUDAH DIPISAH JADI 2 BARIS (ANTI-TERPOTONG 'AH')
   printData += rataTengah("--------------------------------");
   printData += rataTengah("** TRANSAKSI BERHASIL **");
   printData += rataTengah("TERIMA KASIH ATAS");
