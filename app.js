@@ -111,7 +111,7 @@ async function scanGambarOcr(imageBlob) {
   }
 }
 
-// ==================== PARSER MASTER LENGKAP & ANTI-GAGAL ====================
+// ==================== PARSER MASTER LENGKAP & ANTI-SIMBOL ANEH ====================
 function parseOcrTextMaster(rawText) {
   if (!rawText) return;
 
@@ -120,35 +120,36 @@ function parseOcrTextMaster(rawText) {
   const oneLine = cleanText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
 
   // ==========================================
-  // 1. FORMAT STRUK TOKEN LISTRIK (PERSIS STRUK MINGAN)
+  // 1. FORMAT STRUK TOKEN LISTRIK
   // ==========================================
   if (/STRUK\s*TOKEN|TOKEN\s*LISTRIK|ID\s*PLN|JUMLAH\s*DAYA|TARIF\s*DAYA|MCB\s*PEMILIK/i.test(oneLine)) {
     dataAktifStruk.tipe = 'token';
 
-    // A. 20 Digit Angka Token (Contoh: 0857-6239-5611-2486-5490)
+    // A. 20 Digit Angka Token
     const tkn = oneLine.match(/(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})/);
     if (tkn) dataAktifStruk.tokenNumber = tkn[1].replace(/-/g, ' ');
 
-    // B. Baca Baris per Baris (Bekerja 100% pada Struk MINGAN)
+    // B. Baca Baris per Baris
     for (const line of lines) {
-      // 1. Nama Pelanggan (Contoh: "NAMA : MINGAN")
+      // 1. Nama Pelanggan (Bersihkan simbol ©, ®, dll)
       if (/^NAMA/i.test(line)) {
-        const n = line.replace(/^NAMA[\s:;.-]*/i, '').trim().toUpperCase();
+        let n = line.replace(/^NAMA[\s:;.-]*/i, '').trim().toUpperCase();
+        n = n.replace(/^[©®℗@*#0-9\W_]+/g, '').replace(/[©®℗@]/g, '').trim();
         if (n.length >= 2 && !/TOKO|AGEN|PENGIRIM/i.test(n)) {
           dataAktifStruk.plnNama = n;
         }
       }
-      // 2. ID PLN / No Meter (Contoh: "ID PLN : 14342562940")
+      // 2. ID PLN / No Meter
       else if (/^ID\s*(PLN|PEL|PIN)|METER/i.test(line)) {
         const m = line.match(/\d{10,13}/);
         if (m) dataAktifStruk.plnMeter = m[0];
       }
-      // 3. ID TRX / Ref (Contoh: "ID TRX : 1463753171")
+      // 3. ID TRX / Ref
       else if (/^ID\s*TRX|^TRX|^NO\.?\s*REF/i.test(line)) {
         const r = line.match(/\d{8,18}/);
         if (r) dataAktifStruk.plnRef = r[0];
       }
-      // 4. Jumlah Daya / KWH (Contoh: "JUMLAH DAYA : 13.50 KWH")
+      // 4. Jumlah Daya / KWH
       else if (/DAYA|KWH/i.test(line)) {
         const kMatch = line.match(/([0-9.,]+\s*KWH)/i) || line.match(/([0-9]+[.,][0-9]{1,2})/);
         if (kMatch && !dataAktifStruk.plnKwh) {
@@ -157,7 +158,7 @@ function parseOcrTextMaster(rawText) {
           dataAktifStruk.plnKwh = k;
         }
       }
-      // 5. Total Harga (Contoh: "HARGA : Rp 25.000")
+      // 5. Total Harga
       else if (/^HARGA|^TOTAL|^TAGIHAN/i.test(line)) {
         const h = line.match(/[\d.,]+/);
         if (h) {
@@ -167,7 +168,10 @@ function parseOcrTextMaster(rawText) {
       }
     }
 
-    // Fallback Harga jika belum ketemu
+    if (dataAktifStruk.plnNama) {
+      dataAktifStruk.plnNama = dataAktifStruk.plnNama.replace(/^[©®℗@*#0-9\W_]+/g, '').replace(/[©®℗@]/g, '').trim();
+    }
+
     if (!dataAktifStruk.plnTotal) {
       const hrgAlt = oneLine.match(/(?:HARGA|TOTAL)[\s:;.-]*Rp?\s*([\d.,]+)/i) || oneLine.match(/Rp\s*([\d.,]+)/i);
       if (hrgAlt) {
@@ -183,11 +187,10 @@ function parseOcrTextMaster(rawText) {
   // ==========================================
   dataAktifStruk.tipe = 'transfer';
 
-  // Nominal Transfer
   const nom = oneLine.match(/Rp\s*([\d.,]+)/i);
   if (nom) dataAktifStruk.nominal = parseInt(nom[1].replace(/[^0-9]/g, ''));
 
-  // --- A. FORMAT DANA (BILINGUAL ENGLISH/INDO) ---
+  // A. FORMAT DANA
   if (/DANA|Send\s*Money|Receiver\s*Detail/i.test(oneLine)) {
     const danaSum = oneLine.match(/(?:Send\s*Money|Kirim\s*Uang).*?(?:to|ke)\s+([A-Za-z\s.'’]+?)(?:\s*[-–]\s*)(SEABANK|BRI|BCA|MANDIRI|BNI|[A-Za-z]+)/i);
     if (danaSum) {
@@ -200,7 +203,6 @@ function parseOcrTextMaster(rawText) {
       if (nameDetail) dataAktifStruk.namaPenerima = nameDetail[1].trim().toUpperCase();
     }
 
-    // Nomor Rekening DANA (Menangkap 4 digit bertitik atau 4 digit di belakang nama bank)
     const danaMasked = oneLine.match(/[•*.-]{2,}\s*(\d[\s\d]{2,6})/) || oneLine.match(/(?:Seabank|BRI|BCA|Mandiri|BNI|Bank)[A-Za-z\s]*?[•*.\s-_]*?(\d{2,4}\s*\d{2,4})\b/i);
     if (danaMasked) {
       const d = danaMasked[1].replace(/\s/g, '');
@@ -214,7 +216,7 @@ function parseOcrTextMaster(rawText) {
     if (txId) dataAktifStruk.ref = txId[1].replace(/\s/g, '').substring(0, 20);
   }
 
-  // --- B. FORMAT QITA BRI ---
+  // B. FORMAT QITA BRI
   else if (/Qita|Transfer\s*Bank\s*BRI/i.test(oneLine) || (oneLine.includes("BANK BRI") && oneLine.includes("Referensi"))) {
     dataAktifStruk.bankTujuan = "BRI";
     const refBri = oneLine.match(/No\.?\s*Referensi[\s:]*([0-9]{10,16})/i) || oneLine.match(/\b\d{12}\b/);
@@ -227,7 +229,7 @@ function parseOcrTextMaster(rawText) {
     }
   }
 
-  // --- C. FORMAT SEABANK ---
+  // C. FORMAT SEABANK
   else if (/SeaBank|Pembayaran\s*Diterima|Hasil\s*Transfer/i.test(oneLine)) {
     const seaKe = oneLine.match(/Ke\s+([A-Za-z\s.'’]{3,30})\s+([A-Z]{3,10})[\s:]+([0-9]{9,20})/i);
     if (seaKe) {
@@ -238,6 +240,66 @@ function parseOcrTextMaster(rawText) {
     const seaRef = oneLine.match(/No\.?\s*Transaksi[\s:]*([0-9\s]{15,30})/i);
     if (seaRef) dataAktifStruk.ref = seaRef[1].replace(/\s/g, '');
   }
+
+  if (dataAktifStruk.namaPenerima) {
+    dataAktifStruk.namaPenerima = dataAktifStruk.namaPenerima.replace(/^[©®℗@0-9\W_]+/g, '').replace(/[©®℗@]/g, '').trim();
+  }
+}
+
+// ==================== KONVERTER GAMBAR LOGO KE ESC/POS BITMAP PRINTER ====================
+async function buatBytesLogoThermal(base64Image, targetWidth = 240) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = Math.min(img.width, targetWidth);
+      width = Math.floor(width / 8) * 8; // Wajib kelipatan 8
+      const scale = width / img.width;
+      const height = Math.floor(img.height * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const d = imgData.data;
+      const bytesPerLine = width / 8;
+      const rasterData = [];
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < bytesPerLine; x++) {
+          let byte = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const idx = ((y * width) + (x * 8 + bit)) * 4;
+            const brightness = (0.299 * d[idx] + 0.587 * d[idx+1] + 0.114 * d[idx+2]);
+            if (brightness < 165) {
+              byte |= (0x80 >> bit);
+            }
+          }
+          rasterData.push(byte);
+        }
+      }
+
+      const xL = bytesPerLine % 256;
+      const xH = Math.floor(bytesPerLine / 256);
+      const yL = height % 256;
+      const yH = Math.floor(height / 256);
+
+      // Perintah ESC/POS: Posisi tengah + cetak Raster Bitmap (GS v 0)
+      const cmd = [
+        0x1B, 0x61, 0x01, // Center align
+        0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH,
+        ...rasterData,
+        0x0A // Feed 1 baris
+      ];
+      resolve(new Uint8Array(cmd));
+    };
+    img.onerror = () => resolve(null);
+    img.src = base64Image;
+  });
 }
 
 // ==================== RENDER PREVIEW STRUK THERMAL ====================
@@ -286,7 +348,6 @@ function renderStruk() {
       <div class="my-1 text-center">================================</div>
     `;
   } else {
-    // STRUK TOKEN PLN
     const tkn = dataAktifStruk.tokenNumber || "0000 0000 0000 0000 0000";
     const tokenParts = tkn.split(' ');
     const b1 = tokenParts.slice(0, 3).join(' ') || tkn.substring(0, 14);
@@ -312,7 +373,6 @@ function renderStruk() {
     `;
   }
 
-  // FOOTER SUDAH DIPISAH RAPI JADI 2 BARIS (ANTI-TERPOTONG 'AH')
   const cs = localStorage.getItem('ws_cs') || "0857-8024-3664";
   html += `
     <div class="text-center mt-3 font-bold">** TRANSAKSI BERHASIL **</div>
@@ -622,7 +682,7 @@ async function hubungkanPrinter() {
   }
 }
 
-// ==================== CETAK STRUK THERMAL (ANTI KEPOTONG 'AH') ====================
+// ==================== CETAK STRUK THERMAL (LOGO IKUT TERCETAK) ====================
 async function cetakLangsung() {
   if (!printerCharacteristic) {
     hubungkanPrinter();
@@ -632,10 +692,22 @@ async function cetakLangsung() {
   const waktu = getWaktuSekarang();
   const pengirimAktif = getPengirimAktif();
   const cs = localStorage.getItem('ws_cs') || "0857-8024-3664";
+  const logoBase64 = localStorage.getItem('ws_logo');
   const ESC = "\x1B";
   const GS = "\x1D";
-  let printData = ESC + "@";
 
+  // 1. BUAT BYTE LOGO JIKA ADA
+  let logoBytes = null;
+  if (logoBase64) {
+    try {
+      logoBytes = await buatBytesLogoThermal(logoBase64, 256);
+    } catch (e) {
+      console.error("Gagal convert logo:", e);
+    }
+  }
+
+  // 2. BUAT STRUK TEKS
+  let printData = ESC + "@"; // Reset
   printData += rataTengah(dataAktifStruk.toko || "SakaPay");
 
   if (dataAktifStruk.tipe === 'transfer') {
@@ -701,7 +773,7 @@ async function cetakLangsung() {
     });
   }
 
-  // FOOTER SUDAH DIPISAH JADI 2 BARIS (ANTI-TERPOTONG 'AH')
+  // FOOTER RESMI RAPI (PAS 32 KARAKTER)
   printData += rataTengah("--------------------------------");
   printData += rataTengah("** TRANSAKSI BERHASIL **");
   printData += rataTengah("TERIMA KASIH ATAS");
@@ -712,10 +784,22 @@ async function cetakLangsung() {
   printData += rataTengah("SEBAGAI BUKTI SAH");
   printData += "\n\n\n";
 
+  // GABUNGKAN BYTES LOGO + BYTES TEKS
   const encoder = new TextEncoder();
-  const bytes = encoder.encode(printData);
-  for (let i = 0; i < bytes.length; i += 50) {
-    await printerCharacteristic.writeValue(bytes.slice(i, i + 50));
+  const textBytes = encoder.encode(printData);
+
+  let finalBytes;
+  if (logoBytes) {
+    finalBytes = new Uint8Array(logoBytes.length + textBytes.length);
+    finalBytes.set(logoBytes, 0);
+    finalBytes.set(textBytes, logoBytes.length);
+  } else {
+    finalBytes = textBytes;
+  }
+
+  // KIRIM KE PRINTER VIA BLUETOOTH
+  for (let i = 0; i < finalBytes.length; i += 50) {
+    await printerCharacteristic.writeValue(finalBytes.slice(i, i + 50));
     await new Promise(r => setTimeout(r, 20));
   }
 }
